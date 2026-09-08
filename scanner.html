@@ -63,6 +63,8 @@
   .cam-tool span { min-width: 64px; }
   .cam-tool select, .cam-tool input[type=range] { flex: 1; font: inherit; padding: 6px 8px; border: 1px solid var(--border, #d0d7e2); border-radius: 8px; background: #fff; }
   .cam-tool input[type=range] { padding: 0; border: 0; }
+  .cam-buttons { gap: 8px; }
+  .cam-buttons .zoom-reset { flex: 1; }
   .zoom-reset { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--border, #d0d7e2); background: #fff; border-radius: 8px; }
   .table-box { padding: 10px 18px 6px; border: 2px solid var(--primary); background: var(--primary-soft); border-radius: 12px; min-width: 130px; }
   .card-type { display: inline-block; margin-top: 6px; padding: 2px 10px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-size: 13px; font-weight: 600; }
@@ -153,7 +155,12 @@
             <input type="range" id="zoomRange" min="1" max="5" step="0.1" value="1">
             <button type="button" id="btnZoomReset" class="zoom-reset">รีเซ็ต</button>
           </div>
+          <div class="cam-tool cam-buttons">
+            <button type="button" id="btnFocus" class="zoom-reset">โฟกัสใหม่</button>
+            <button type="button" id="btnTorch" class="zoom-reset" hidden>เปิดไฟฉาย</button>
+          </div>
           <div class="muted small" id="zoomNote" hidden></div>
+          <div class="muted small" id="focusNote">แตะที่ภาพเพื่อสั่งโฟกัส ถ้ายังไม่ชัดให้ถือห่าง QR ประมาณ 20-30 ซม.</div>
         </div>
         <button type="button" class="btn btn-outline" id="btnRetryCam" hidden>ลองเปิดกล้องอีกครั้ง</button>
       </div>
@@ -399,9 +406,85 @@
     return scanner.start(cameraSource(id), SCAN_CONFIG, onScan, onScanErr).then(function () {
       running = true;
       currentCamId = id || currentCamId;
-      return applyHighRes();
+      return applyHighRes().then(function () {
+        setupTorch();
+        return enableContinuousFocus();
+      });
     });
   }
+  /** เข้าถึง track ของกล้องโดยตรง เพื่อสั่งโฟกัสและไฟฉายซึ่งไลบรารีไม่ได้เปิดให้ */
+  function videoTrack() {
+    try {
+      var v = document.querySelector('#reader video');
+      if (!v || !v.srcObject) return null;
+      var list = v.srcObject.getVideoTracks();
+      return (list && list[0]) ? list[0] : null;
+    } catch (e) { return null; }
+  }
+  function trackCaps() {
+    var t = videoTrack();
+    try { return (t && t.getCapabilities) ? t.getCapabilities() : null; } catch (e) { return null; }
+  }
+  function applyTrack(adv) {
+    var t = videoTrack();
+    if (!t || !t.applyConstraints) return Promise.resolve(false);
+    return t.applyConstraints({ advanced: [adv] }).then(function () { return true; }, function () { return false; });
+  }
+
+  /** เปิดโฟกัสอัตโนมัติแบบต่อเนื่อง กล้องหลายรุ่นล็อกโฟกัสไว้หลังสั่งซูม */
+  function enableContinuousFocus() {
+    var caps = trackCaps();
+    var modes = (caps && caps.focusMode) || [];
+    if (modes.indexOf('continuous') < 0) return Promise.resolve(false);
+    return applyTrack({ focusMode: 'continuous' });
+  }
+  /** บังคับให้กล้องโฟกัสใหม่ทันที โดยสลับโหมดแล้วกลับมาต่อเนื่อง */
+  function refocus(point) {
+    var caps = trackCaps();
+    var modes = (caps && caps.focusMode) || [];
+    var note = $('focusNote');
+    if (!modes.length) {
+      note.textContent = 'กล้องรุ่นนี้สั่งโฟกัสจากหน้าเว็บไม่ได้ ให้ขยับเข้า-ออกช้า ๆ จนภาพชัด หรือลดซูมลง';
+      return Promise.resolve(false);
+    }
+    note.textContent = 'กำลังโฟกัส...';
+    var first = Promise.resolve(false);
+    if (point && caps.pointsOfInterest) first = applyTrack({ pointsOfInterest: [point] });
+    else if (modes.indexOf('single-shot') >= 0) first = applyTrack({ focusMode: 'single-shot' });
+    else if (modes.indexOf('manual') >= 0) first = applyTrack({ focusMode: 'manual' });
+    return first.then(function () {
+      return modes.indexOf('continuous') >= 0 ? applyTrack({ focusMode: 'continuous' }) : true;
+    }).then(function () {
+      note.textContent = 'แตะที่ภาพเพื่อสั่งโฟกัส ถ้ายังไม่ชัดให้ถือห่าง QR ประมาณ 20-30 ซม.';
+      return true;
+    });
+  }
+  function setupTorch() {
+    var caps = trackCaps();
+    var btn = $('btnTorch');
+    btn.hidden = !(caps && caps.torch);
+    btn.textContent = 'เปิดไฟฉาย';
+    btn.dataset.on = '';
+  }
+  $('btnFocus').addEventListener('click', function () { refocus(null); });
+  $('btnTorch').addEventListener('click', function () {
+    var on = this.dataset.on !== '1', btn = this;
+    applyTrack({ torch: on }).then(function (okay) {
+      if (!okay) { btn.textContent = 'ไฟฉายใช้ไม่ได้'; return; }
+      btn.dataset.on = on ? '1' : '';
+      btn.textContent = on ? 'ปิดไฟฉาย' : 'เปิดไฟฉาย';
+    });
+  });
+  document.getElementById('reader').addEventListener('click', function (e) {
+    var v = document.querySelector('#reader video');
+    if (!v) { refocus(null); return; }
+    var r = v.getBoundingClientRect();
+    if (!r.width || !r.height) { refocus(null); return; }
+    var x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    var y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    refocus({ x: x, y: y });
+  });
+
   function pauseCam() { try { if (running) scanner.pause(true); } catch (e) { /* ignore */ } }
   function resumeCam() { try { if (running) scanner.resume(); } catch (e) { /* ignore */ } }
   function stopCam() {
@@ -498,7 +581,7 @@
     r.max = Math.min(caps.zoom.max, Math.max(caps.zoom.min + 1, 5));
     r.step = caps.zoom.step || 0.1;
     var z = savedZoom();
-    if (!z || z < r.min || z > r.max) z = Math.min(r.max, Math.max(r.min, caps.zoom.min * 2 || 2));  // เริ่มที่ประมาณ 2x
+    if (!z || z < r.min || z > r.max) z = caps.zoom.min;   // เริ่มที่ 1x กล้องจะโฟกัสง่ายที่สุด
     r.value = z;
     row.hidden = false;
     applyZoom(z);
@@ -507,7 +590,13 @@
     z = Number(z);
     $('zoomVal').textContent = z.toFixed(1).replace(/\.0$/, '') + 'x';
     set(KEY_ZOOM, String(z));
-    try { scanner.applyVideoConstraints({ advanced: [{ zoom: z }] }).catch(function () { /* ignore */ }); } catch (e) { /* ignore */ }
+    try {
+      scanner.applyVideoConstraints({ advanced: [{ zoom: z }] })
+        .then(function () { return enableContinuousFocus(); })   // ซูมแล้วกล้องมักล็อกโฟกัส ต้องสั่งใหม่
+        .catch(function () { /* ignore */ });
+    } catch (e) { /* ignore */ }
+    clearTimeout(applyZoom.t);
+    applyZoom.t = setTimeout(function () { refocus(null); }, 500);
   }
   $('camSelect').addEventListener('change', function () { switchCamera(this.value); });
   $('zoomRange').addEventListener('input', function () { applyZoom(this.value); });
