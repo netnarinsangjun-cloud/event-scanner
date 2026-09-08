@@ -58,6 +58,11 @@
   .person .name { font-size: 24px; font-weight: 700; line-height: 1.25; }
   .person .org { color: var(--muted); font-size: 14px; }
   .seat-row { display: flex; gap: 10px; justify-content: center; margin: 14px 0 4px; }
+  .cam-tools { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .cam-tool { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .cam-tool span { min-width: 64px; }
+  .cam-tool select, .cam-tool input[type=range] { flex: 1; font: inherit; padding: 6px 8px; border: 1px solid var(--border, #d0d7e2); border-radius: 8px; background: #fff; }
+  .cam-tool input[type=range] { padding: 0; border: 0; }
   .table-box { padding: 10px 18px 6px; border: 2px solid var(--primary); background: var(--primary-soft); border-radius: 12px; min-width: 130px; }
   .card-type { display: inline-block; margin-top: 6px; padding: 2px 10px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-size: 13px; font-weight: 600; }
   .table-box .lbl { font-size: 13px; }
@@ -140,6 +145,10 @@
       <div id="readerWrap">
         <div id="reader"></div>
         <div id="camMsg" class="muted small" style="margin-top:8px">กำลังเปิดกล้อง...</div>
+        <div id="camTools" class="cam-tools" hidden>
+          <label class="cam-tool"><span>กล้อง</span><select id="camSelect"></select></label>
+          <label class="cam-tool" id="zoomRow" hidden><span>ซูม <b id="zoomVal">1x</b></span><input type="range" id="zoomRange" min="1" max="1" step="0.1" value="1"></label>
+        </div>
         <button type="button" class="btn btn-outline" id="btnRetryCam" hidden>ลองเปิดกล้องอีกครั้ง</button>
       </div>
 
@@ -338,29 +347,129 @@
   }
 
   /* ---------- กล้อง ---------- */
+  var KEY_CAM = 'scanner_cam', KEY_ZOOM = 'scanner_zoom';
+  var SCAN_CONFIG = { fps: 10, qrbox: { width: 240, height: 240 } };
+  var cameras = [], currentCamId = null, switching = false;
+
+  /** ให้คะแนนกล้องหลังตัวหลัก (1x) สูงสุด เลี่ยง Ultra Wide / Telephoto / กล้องหน้า */
+  function cameraScore(label) {
+    var l = String(label || '').toLowerCase(), sc = 0;
+    if (/back|rear|environment|หลัง/.test(l)) sc += 10;
+    if (/front|user|หน้า|facetime/.test(l)) sc -= 30;
+    if (/ultra|0\.5|macro/.test(l)) sc -= 20;
+    if (/tele|zoom/.test(l)) sc -= 8;
+    if (/dual|triple/.test(l)) sc += 1;          // กล้องรวมของ iPhone ใช้ได้ แต่ตัว "Back Camera" ล้วนดีกว่า
+    if (/^back camera$|^กล้องหลัง$/.test(l.trim())) sc += 5;
+    if (/camera2 0|camera 0\b/.test(l)) sc += 3;   // Android มักให้กล้องหลัก id 0
+    return sc;
+  }
+  function pickBestCamera(list) {
+    var best = null, bestScore = -Infinity;
+    list.forEach(function (c) { var sc = cameraScore(c.label); if (sc > bestScore) { best = c; bestScore = sc; } });
+    return best;
+  }
+  function onScan(text) { handleToken(text); }
+  function onScanErr() { /* ข้ามข้อผิดพลาดระหว่างเล็ง */ }
+
+  function startWith(source) {
+    scanner = scanner || new Html5Qrcode('reader');
+    return scanner.start(source, SCAN_CONFIG, onScan, onScanErr).then(function () { running = true; });
+  }
+  function stopCam() {
+    if (!running) return Promise.resolve();
+    return scanner.stop().catch(function () { /* ignore */ }).then(function () { running = false; });
+  }
+
   function startCam() {
     $('btnRetryCam').hidden = true;
     if (!window.Html5Qrcode) {
       $('camMsg').textContent = 'โหลดไลบรารีกล้องไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วรีเฟรช';
       return;
     }
-    if (running) return;
-    scanner = scanner || new Html5Qrcode('reader');
+    if (running || switching) return;
+    switching = true;
     $('camMsg').textContent = 'กำลังเปิดกล้อง... กรุณากดอนุญาต';
-    scanner.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 240, height: 240 } },
-      function (text) { handleToken(text); },
-      function () { /* ข้ามข้อผิดพลาดระหว่างเล็ง */ }
-    ).then(function () {
-      running = true;
+    var savedCam = get(KEY_CAM);
+    var first = savedCam
+      ? startWith({ deviceId: { exact: savedCam } }).then(function () { currentCamId = savedCam; })
+          .catch(function () { del(KEY_CAM); return startWith({ facingMode: 'environment' }); })
+      : startWith({ facingMode: 'environment' });
+    first.then(function () {
       $('camMsg').textContent = 'เล็งกล้องไปที่ QR Code';
-    }).catch(function (err) {
-      running = false;
-      $('camMsg').textContent = 'เปิดกล้องไม่สำเร็จ: ' + (err && err.message ? err.message : err);
-      $('btnRetryCam').hidden = false;
-    });
+      return listCameras();
+    }).then(function () {
+      // ครั้งแรก: ถ้ามีกล้องหลังหลายตัว ให้สลับไปตัวหลัก (1x) โดยอัตโนมัติ
+      if (!savedCam && cameras.length > 1) {
+        var best = pickBestCamera(cameras);
+        if (best && best.id !== currentCamId) return switchCamera(best.id);
+      }
+    }).then(function () { setupZoom(); })
+      .catch(function (err) {
+        running = false;
+        $('camMsg').textContent = 'เปิดกล้องไม่สำเร็จ: ' + (err && err.message ? err.message : err);
+        $('btnRetryCam').hidden = false;
+      }).then(function () { switching = false; });
   }
+
+  /** ดึงรายชื่อกล้องหลังจากได้รับอนุญาตแล้ว (ก่อนอนุญาต ชื่อกล้องจะว่าง) */
+  function listCameras() {
+    return Html5Qrcode.getCameras().then(function (list) {
+      cameras = list || [];
+      if (!currentCamId) {
+        try {
+          var track = scanner.getRunningTrackSettings && scanner.getRunningTrackSettings();
+          if (track && track.deviceId) currentCamId = track.deviceId;
+        } catch (e) { /* ignore */ }
+      }
+      var sel = $('camSelect');
+      sel.innerHTML = cameras.map(function (c, i) {
+        return '<option value="' + esc(c.id) + '">' + esc(c.label || ('กล้อง ' + (i + 1))) + '</option>';
+      }).join('');
+      if (currentCamId) sel.value = currentCamId;
+      $('camTools').hidden = cameras.length < 1;
+      sel.parentNode.hidden = cameras.length < 2;
+    }).catch(function () { cameras = []; });
+  }
+
+  function switchCamera(id) {
+    if (!id || id === currentCamId) return Promise.resolve();
+    $('camMsg').textContent = 'กำลังสลับกล้อง...';
+    return stopCam().then(function () { return startWith({ deviceId: { exact: id } }); })
+      .then(function () {
+        currentCamId = id; set(KEY_CAM, id);
+        $('camSelect').value = id;
+        $('camMsg').textContent = 'เล็งกล้องไปที่ QR Code';
+        setupZoom();
+      }).catch(function (err) {
+        $('camMsg').textContent = 'สลับกล้องไม่สำเร็จ: ' + (err && err.message ? err.message : err);
+        return startWith({ facingMode: 'environment' }).catch(function () { /* ignore */ });
+      });
+  }
+
+  /** แถบซูม แสดงเฉพาะเครื่องที่กล้องรองรับ (Android Chrome ส่วนใหญ่ / iPhone บางรุ่น) */
+  function setupZoom() {
+    var row = $('zoomRow');
+    row.hidden = true;
+    if (!running || !scanner.getRunningTrackCapabilities) return;
+    var caps = null;
+    try { caps = scanner.getRunningTrackCapabilities(); } catch (e) { return; }
+    if (!caps || !caps.zoom || !(caps.zoom.max > caps.zoom.min)) return;
+    var r = $('zoomRange');
+    r.min = caps.zoom.min; r.max = Math.min(caps.zoom.max, 5); r.step = caps.zoom.step || 0.1;
+    var saved = parseFloat(get(KEY_ZOOM));
+    var z = (!isNaN(saved) && saved >= caps.zoom.min && saved <= caps.zoom.max) ? saved : caps.zoom.min;
+    r.value = z;
+    row.hidden = false;
+    applyZoom(z);
+  }
+  function applyZoom(z) {
+    $('zoomVal').textContent = Number(z).toFixed(1).replace(/\.0$/, '') + 'x';
+    try {
+      scanner.applyVideoConstraints({ advanced: [{ zoom: Number(z) }] }).then(function () { set(KEY_ZOOM, String(z)); }).catch(function () { /* ignore */ });
+    } catch (e) { /* ignore */ }
+  }
+  $('camSelect').addEventListener('change', function () { switchCamera(this.value); });
+  $('zoomRange').addEventListener('input', function () { applyZoom(this.value); });
   function pauseCam() { try { if (running) scanner.pause(true); } catch (e) { /* ignore */ } }
   function resumeCam() { try { if (running) scanner.resume(); } catch (e) { /* ignore */ } }
 
