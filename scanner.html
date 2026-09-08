@@ -404,12 +404,11 @@
   /** ความละเอียดต้องกำหนดตั้งแต่ตอนเปิดกล้อง ถ้าเปลี่ยนทีหลังกรอบสแกนจะเพี้ยนไม่ตรงกับภาพ */
   function scanConfig(id) {
     var vc = id ? { deviceId: { exact: id } } : { facingMode: 'environment' };
-    vc.width = { ideal: 1280 };
-    vc.height = { ideal: 720 };
+    vc.width = { ideal: 1920 };
+    vc.height = { ideal: 1080 };
     return {
       fps: 10,
       qrbox: function (w, h) { var m = Math.round(Math.min(w, h) * BOX_RATIO); return { width: m, height: m }; },
-      aspectRatio: 1,
       videoConstraints: vc
     };
   }
@@ -427,6 +426,7 @@
       currentCamId = id || currentCamId;
       setupTorch();
       setupFocus();
+      startNativeLoop();
       return enableContinuousFocus();
     });
   }
@@ -653,9 +653,28 @@
     refocus({ x: x, y: y });
   });
 
+  /* ตัวอ่านเสริม: ใช้ตัวถอดรหัสของเบราว์เซอร์อ่าน "ทั้งภาพ" ที่ความละเอียดเต็ม
+   * ทำงานคู่กับตัวอ่านหลักที่อ่านเฉพาะในกรอบ ทำให้ QR เล็กหรืออยู่นอกกรอบก็ยังติด   */
+  var nativeTimer = null, nativeDetector = null, nativeHits = 0;
+  function startNativeLoop() {
+    clearInterval(nativeTimer);
+    if (!window.BarcodeDetector) return;
+    try { nativeDetector = nativeDetector || new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { return; }
+    nativeTimer = setInterval(function () {
+      if (!running || busy || !nativeDetector) return;
+      var v = document.querySelector('#reader video');
+      if (!v || !v.videoWidth) return;
+      nativeDetector.detect(v).then(function (list) {
+        if (list && list.length && list[0].rawValue) { nativeHits++; handleToken(list[0].rawValue); }
+      }).catch(function () { /* ข้ามเฟรมที่อ่านไม่ได้ */ });
+    }, 250);
+  }
+  function stopNativeLoop() { clearInterval(nativeTimer); nativeTimer = null; }
+
   function pauseCam() { try { if (running) scanner.pause(true); } catch (e) { /* ignore */ } }
   function resumeCam() { try { if (running) scanner.resume(); } catch (e) { /* ignore */ } }
   function stopCam() {
+    stopNativeLoop();
     if (!running) return Promise.resolve();
     return scanner.stop().catch(function () { /* ignore */ }).then(function () { running = false; });
   }
@@ -674,7 +693,7 @@
       ? startWith(saved).catch(function () { del(KEY_CAM); return startWith(null); })
       : startWith(null);
     first.then(function () {
-      $('camMsg').textContent = 'เล็งกล้องไปที่ QR Code';
+      $('camMsg').textContent = 'เล็งกล้องไปที่ QR Code' + camInfo();
       return listCameras();
     }).then(function () {
       if (!saved && cameras.length > 1) {                 // ครั้งแรก เลือกกล้องหลังตัวหลักให้เอง
@@ -707,6 +726,10 @@
     });
   }
 
+  function camInfo() {
+    var v = document.querySelector('#reader video');
+    return (v && v.videoWidth) ? ' · ภาพ ' + v.videoWidth + 'x' + v.videoHeight + (window.BarcodeDetector ? ' · ตัวอ่านเต็มภาพ' : '') : '';
+  }
   function trackSetting(key) {
     try {
       var st = scanner.getRunningTrackSettings ? scanner.getRunningTrackSettings() : null;
