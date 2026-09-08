@@ -156,6 +156,13 @@
             <input type="range" id="zoomRange" min="1" max="5" step="0.1" value="1">
             <button type="button" id="btnZoomReset" class="zoom-reset">รีเซ็ต</button>
           </div>
+          <label class="cam-tool"><span>กรอบสแกน</span>
+            <select id="boxSize">
+              <option value="0.6">เล็ก</option>
+              <option value="0.72">กลาง (แนะนำ)</option>
+              <option value="0.88">ใหญ่</option>
+            </select>
+          </label>
           <button type="button" id="btnShot" class="btn btn-primary btn-shot">ถ่ายภาพแล้วอ่าน QR</button>
           <div class="cam-tool cam-buttons">
             <button type="button" id="btnFocus" class="zoom-reset">โฟกัสใหม่</button>
@@ -399,12 +406,11 @@
         .catch(function () { /* กล้องไม่รองรับก็ใช้ค่าเดิม */ });
     } catch (e) { return Promise.resolve(); }
   }
+  // สัดส่วนกรอบสแกนเทียบกับด้านสั้นของภาพ เปลี่ยนได้จากหน้าจอ
+  var BOX_RATIO = parseFloat(get('scanner_box')) || 0.72;
   var SCAN_CONFIG = {
-    fps: 15,
-    // กรอบกว้างขึ้น เผื่อ QR ใบใหญ่หรือถือใกล้
-    qrbox: function (w, h) { var m = Math.round(Math.min(w, h) * 0.88); return { width: m, height: m }; },
-    // ใช้ตัวถอดรหัสของเบราว์เซอร์เองถ้ามี (Android Chrome) ทนภาพเบลอและ QR บนจอมือถือได้ดีกว่ามาก
-    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    fps: 10,
+    qrbox: function (w, h) { var m = Math.round(Math.min(w, h) * BOX_RATIO); return { width: m, height: m }; }
   };
 
   function onScan(text) { handleToken(text); }
@@ -514,15 +520,41 @@
     if (fs.scanFileV2) return fs.scanFileV2(file, false).then(function (r) { return r.decodedText; }, function () { return null; });
     return fs.scanFile(file, false).then(function (t) { return t; }, function () { return null; });
   }
+  var shotInfo = '';
+  /** อ่าน QR จากภาพนิ่ง ลองตัวถอดรหัสของระบบก่อน แล้วค่อยลองตัวสำรองและภาพครอบกลาง */
   function decodeBlob(blob) {
-    if (window.BarcodeDetector) {
-      return createImageBitmap(blob).then(function (bmp) {
-        return new BarcodeDetector({ formats: ['qr_code'] }).detect(bmp);
-      }).then(function (list) {
-        return (list && list.length) ? list[0].rawValue : decodeWithLib(blob);
-      }).catch(function () { return decodeWithLib(blob); });
-    }
-    return decodeWithLib(blob);
+    shotInfo = Math.round((blob.size || 0) / 1024) + ' KB';
+    return createImageBitmap(blob).then(function (bmp) {
+      shotInfo = bmp.width + 'x' + bmp.height + ' · ' + shotInfo;
+      if (!window.BarcodeDetector) return null;
+      return new BarcodeDetector({ formats: ['qr_code'] }).detect(bmp)
+        .then(function (list) { return (list && list.length) ? list[0].rawValue : null; }, function () { return null; })
+        .then(function (text) {
+          if (text) { shotInfo += ' · ตัวอ่านระบบ'; return text; }
+          return centerCrop(bmp).then(function (cropped) {
+            if (!cropped) return null;
+            return new BarcodeDetector({ formats: ['qr_code'] }).detect(cropped)
+              .then(function (list) {
+                if (list && list.length) { shotInfo += ' · ครอบกลางภาพ'; return list[0].rawValue; }
+                return null;
+              }, function () { return null; });
+          });
+        });
+    }, function () { return null; }).then(function (text) {
+      if (text) return text;
+      return decodeWithLib(blob).then(function (t) { if (t) shotInfo += ' · ตัวอ่านสำรอง'; return t; });
+    });
+  }
+  /** ครอบกลางภาพ 60% แล้วขยาย 2 เท่า ช่วยกรณี QR เล็กอยู่กลางภาพใหญ่ */
+  function centerCrop(bmp) {
+    try {
+      var side = Math.round(Math.min(bmp.width, bmp.height) * 0.6);
+      var sx = Math.round((bmp.width - side) / 2), sy = Math.round((bmp.height - side) / 2);
+      var c = document.createElement('canvas');
+      c.width = side * 2; c.height = side * 2;
+      c.getContext('2d').drawImage(bmp, sx, sy, side, side, 0, 0, c.width, c.height);
+      return createImageBitmap(c);
+    } catch (e) { return Promise.resolve(null); }
   }
   function shootAndDecode() {
     var btn = $('btnShot');
@@ -534,7 +566,7 @@
     shotBlob().then(decodeBlob).then(function (text) {
       if (text) { lastSeen = { token: '', at: 0 }; handleToken(text); return; }
       beep(false); buzz([50, 60, 50]);
-      setBanner('error', '<strong>อ่านไม่ออก</strong><br>ให้ QR อยู่กลางกรอบ ถือนิ่ง ๆ แล้วกดถ่ายอีกครั้ง');
+      setBanner('error', '<strong>อ่านไม่ออก</strong><br>ให้ QR เต็มกรอบพอดีและถือนิ่ง แล้วกดถ่ายอีกครั้ง<br><span class="muted small">ภาพที่ถ่าย: ' + esc(shotInfo) + '</span>');
     }).catch(function (err) {
       setBanner('error', 'ถ่ายภาพไม่สำเร็จ: ' + esc(err && err.message ? err.message : err));
     }).then(function () {
@@ -542,6 +574,16 @@
     });
   }
   $('btnShot').addEventListener('click', shootAndDecode);
+  $('boxSize').value = String(BOX_RATIO);
+  $('boxSize').addEventListener('change', function () {
+    BOX_RATIO = parseFloat(this.value) || 0.72;
+    set('scanner_box', String(BOX_RATIO));
+    if (!running) return;
+    var id = currentCamId;
+    stopCam().then(function () { return startWith(id); }).then(function () {
+      $('camMsg').textContent = 'เล็งกล้องไปที่ QR Code';
+    }).catch(function () { /* ignore */ });
+  });
 
   /** ถ้ากล้องไม่เปิดให้สั่งโฟกัส ให้ซ่อนปุ่มโฟกัสและแนะนำให้ใช้ปุ่มถ่ายภาพแทน */
   function setupFocus() {
