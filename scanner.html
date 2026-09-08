@@ -164,6 +164,10 @@
             </select>
           </label>
           <button type="button" id="btnShot" class="btn btn-primary btn-shot">ถ่ายภาพแล้วอ่าน QR</button>
+          <label class="cam-tool" id="autoFocusRow" hidden>
+            <input type="checkbox" id="autoFocus" checked style="width:20px;height:20px;flex:none">
+            <span style="min-width:0">กระตุ้นโฟกัสอัตโนมัติทุก 4 วินาที</span>
+          </label>
           <div class="cam-tool cam-buttons">
             <button type="button" id="btnFocus" class="zoom-reset">โฟกัสใหม่</button>
             <button type="button" id="btnTorch" class="zoom-reset" hidden>เปิดไฟฉาย</button>
@@ -454,14 +458,34 @@
     if (modes.indexOf('continuous') < 0) return Promise.resolve(false);
     return applyTrack({ focusMode: 'continuous' });
   }
-  /** บังคับให้กล้องโฟกัสใหม่ทันที โดยสลับโหมดแล้วกลับมาต่อเนื่อง */
+  /** ขยับซูมไปกลับเล็กน้อย เป็นวิธีบังคับให้กล้องโฟกัสใหม่ในเครื่องที่ไม่เปิดสิทธิ์สั่งโฟกัสตรง ๆ */
+  function nudgeZoomFocus() {
+    var caps = trackCaps();
+    if (!caps || !caps.zoom || !(caps.zoom.max > caps.zoom.min)) return Promise.resolve(false);
+    var r = $('zoomRange');
+    var z = Number(r.value) || caps.zoom.min;
+    var step = (caps.zoom.max - caps.zoom.min) * 0.25;
+    var alt = (z + step <= caps.zoom.max) ? z + step : Math.max(caps.zoom.min, z - step);
+    if (alt === z) return Promise.resolve(false);
+    return applyTrack({ zoom: alt })
+      .then(function () { return new Promise(function (res) { setTimeout(res, 350); }); })
+      .then(function () { return applyTrack({ zoom: z }); })
+      .then(function () { return true; });
+  }
+
+  /** บังคับให้กล้องโฟกัสใหม่ทันที */
   function refocus(point) {
     var caps = trackCaps();
     var modes = (caps && caps.focusMode) || [];
     var note = $('focusNote');
     if (!modes.length) {
-      note.textContent = 'กล้องรุ่นนี้สั่งโฟกัสจากหน้าเว็บไม่ได้ ให้ขยับเข้า-ออกช้า ๆ จนภาพชัด หรือลดซูมลง';
-      return Promise.resolve(false);
+      note.textContent = 'กำลังสั่งโฟกัส...';
+      return nudgeZoomFocus().then(function (okay) {
+        note.textContent = okay
+          ? 'สั่งโฟกัสแล้ว ถือนิ่ง 1 วินาที ให้ QR อยู่กลางกรอบประมาณครึ่งกรอบ ไม่ต้องเต็มกรอบ'
+          : 'มือถือรุ่นนี้สั่งโฟกัสจากหน้าเว็บไม่ได้ ให้ถือห่าง 25-30 ซม. แล้วกดปุ่มถ่ายภาพ';
+        return okay;
+      });
     }
     note.textContent = 'กำลังโฟกัส...';
     var first = Promise.resolve(false);
@@ -508,9 +532,11 @@
     if (window.ImageCapture) {
       try {
         var ic = new ImageCapture(t);
-        return ic.takePhoto().catch(function () { return canvasShot(); });
+        return ic.takePhoto().then(function (b) { shotSource = 'กล้องถ่ายจริง'; return b; },
+          function () { shotSource = 'จับจากวิดีโอ'; return canvasShot(); });
       } catch (e) { /* ใช้วิธีจับภาพจากวิดีโอแทน */ }
     }
+    shotSource = 'จับจากวิดีโอ';
     return canvasShot();
   }
   function decodeWithLib(blob) {
@@ -520,10 +546,10 @@
     if (fs.scanFileV2) return fs.scanFileV2(file, false).then(function (r) { return r.decodedText; }, function () { return null; });
     return fs.scanFile(file, false).then(function (t) { return t; }, function () { return null; });
   }
-  var shotInfo = '';
+  var shotInfo = '', shotSource = '';
   /** อ่าน QR จากภาพนิ่ง ลองตัวถอดรหัสของระบบก่อน แล้วค่อยลองตัวสำรองและภาพครอบกลาง */
   function decodeBlob(blob) {
-    shotInfo = Math.round((blob.size || 0) / 1024) + ' KB';
+    shotInfo = shotSource + ' · ' + Math.round((blob.size || 0) / 1024) + ' KB';
     return createImageBitmap(blob).then(function (bmp) {
       shotInfo = bmp.width + 'x' + bmp.height + ' · ' + shotInfo;
       if (!window.BarcodeDetector) return null;
@@ -562,8 +588,10 @@
     btn.disabled = true;
     var label = btn.textContent;
     btn.textContent = 'กำลังถ่าย...';
-    setBanner('info', 'กำลังถ่ายภาพและอ่าน QR...');
-    shotBlob().then(decodeBlob).then(function (text) {
+    setBanner('info', 'กำลังโฟกัสและถ่ายภาพ...');
+    refocus(null).catch(function () { /* ignore */ })
+      .then(function () { return new Promise(function (r) { setTimeout(r, 600); }); })
+      .then(shotBlob).then(decodeBlob).then(function (text) {
       if (text) { lastSeen = { token: '', at: 0 }; handleToken(text); return; }
       beep(false); buzz([50, 60, 50]);
       setBanner('error', '<strong>อ่านไม่ออก</strong><br>ให้ QR เต็มกรอบพอดีและถือนิ่ง แล้วกดถ่ายอีกครั้ง<br><span class="muted small">ภาพที่ถ่าย: ' + esc(shotInfo) + '</span>');
@@ -586,15 +614,26 @@
   });
 
   /** ถ้ากล้องไม่เปิดให้สั่งโฟกัส ให้ซ่อนปุ่มโฟกัสและแนะนำให้ใช้ปุ่มถ่ายภาพแทน */
+  var autoFocusTimer = null;
   function setupFocus() {
     var caps = trackCaps();
     var modes = (caps && caps.focusMode) || [];
-    var supported = modes.length > 0;
-    $('btnFocus').hidden = !supported;
-    if (!supported) {
-      $('focusNote').textContent = 'มือถือรุ่นนี้สั่งโฟกัสจากหน้าเว็บไม่ได้ ถ้าสแกนไม่ติดใน 2-3 วินาที ให้กดปุ่มถ่ายภาพแล้วอ่าน QR';
+    var native = modes.length > 0;
+    var canNudge = !!(caps && caps.zoom && caps.zoom.max > caps.zoom.min);
+    $('btnFocus').hidden = !(native || canNudge);      // ขยับซูมไปกลับก็ช่วยให้โฟกัสใหม่ได้
+    $('focusNote').textContent = native
+      ? 'แตะที่ภาพเพื่อสั่งโฟกัส ให้ QR อยู่กลางกรอบประมาณครึ่งกรอบ ไม่ต้องเต็มกรอบ'
+      : 'ถือห่าง QR ประมาณ 25-30 ซม. ให้ QR อยู่ประมาณครึ่งกรอบ ไม่ต้องเต็มกรอบ ถ้าไม่ติดให้กดถ่ายภาพ';
+    // เครื่องที่สั่งโฟกัสตรง ๆ ไม่ได้ ให้ขยับซูมกระตุ้นโฟกัสเป็นระยะขณะรอสแกน
+    clearInterval(autoFocusTimer);
+    if (!native && canNudge) {
+      autoFocusTimer = setInterval(function () {
+        if (!running || busy || !$('autoFocus').checked) return;
+        nudgeZoomFocus();
+      }, 4000);
     }
-    return supported;
+    $('autoFocusRow').hidden = native || !canNudge;
+    return native;
   }
 
   $('btnFocus').addEventListener('click', function () { refocus(null); });
