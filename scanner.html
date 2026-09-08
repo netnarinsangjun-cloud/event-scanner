@@ -107,7 +107,7 @@
       <label for="inUrl">ลิงก์ Web App (ลงท้ายด้วย /exec)</label>
       <input id="inUrl" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" spellcheck="false">
       <label for="inPin">รหัสเจ้าหน้าที่</label>
-      <input id="inPin" type="password" inputmode="numeric" placeholder="เช่น 1234" autocomplete="current-password">
+      <input id="inPin" type="password" inputmode="numeric" placeholder="เช่น 1234" autocomplete="off">
       <button type="button" class="btn btn-primary" id="btnConnect">
         <span id="connectLabel">เชื่อมต่อ</span>
       </button>
@@ -202,7 +202,7 @@
   </main>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 (function () {
   'use strict';
@@ -227,6 +227,16 @@
     if (isNaN(d.getTime())) return '-';
     return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + (withSec ? ':' + pad2(d.getSeconds()) : '');
   }
+  /** iOS ปิดเสียงจนกว่าจะมีการแตะจากผู้ใช้ จึงต้องปลุกเสียงตอนกดปุ่ม */
+  function wakeAudio() {
+    try {
+      var C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return;
+      beep.c = beep.c || new C();
+      if (beep.c.state === 'suspended') beep.c.resume();
+    } catch (e) { /* ignore */ }
+  }
+
   function beep(good) {
     try {
       var C = window.AudioContext || window.webkitAudioContext;
@@ -255,10 +265,17 @@
       }
       var timer = setTimeout(function () {
         if (!done) { done = true; cleanup(); reject(new Error('หมดเวลาเชื่อมต่อ ตรวจสอบสัญญาณอินเทอร์เน็ต')); }
-      }, 25000);
+      }, 15000);
       window[cb] = function (data) { if (done) return; done = true; cleanup(); resolve(data); };
       el.onerror = function () {
         if (!done) { done = true; cleanup(); reject(new Error('เชื่อมต่อไม่สำเร็จ ตรวจสอบว่าลิงก์ถูกต้องและตั้ง Who has access เป็น Anyone')); }
+      };
+      // สคริปต์โหลดจบแต่ไม่เรียก callback แปลว่าปลายทางตอบเป็นหน้าเว็บ (ต้องล็อกอิน หรือใช้ลิงก์ /dev)
+      el.onload = function () {
+        if (!done) {
+          done = true; cleanup();
+          reject(new Error('ลิงก์ตอบกลับไม่ใช่ข้อมูลระบบ ตรวจว่าลงท้าย /exec และตั้ง Who has access เป็น Anyone'));
+        }
       };
       el.src = baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + qs + '&callback=' + cb;
       document.head.appendChild(el);
@@ -289,13 +306,22 @@
   function hidePerson() {
     $('personCard').hidden = true;
     $('btnConfirm').hidden = true;
+    // ล้างค่าเดิมด้วย ไม่งั้นถ้าใบถัดไปอ่านไม่ผ่าน จะยังเห็นชื่อ/โต๊ะของคนก่อนหน้าค้างอยู่
+    $('pName').textContent = '';
+    $('pOrg').textContent = '';
+    $('pTable').textContent = '–';
+    $('pSeat').textContent = '–';
+    $('pType').textContent = '';
+    $('pType').hidden = true;
     currentToken = null;
   }
+  var checkedCount = 0;
   function addRecent(name, table, at, seat) {
     recent.unshift({ name: name || 'ยังไม่ระบุชื่อ', table: table + (seat ? '/' + seat : ''), at: at });
     recent = recent.slice(0, 15);
+    checkedCount++;                       // นับสะสมจริง ไม่ใช่จำนวนรายการที่แสดง (ตัดที่ 15)
     $('count').hidden = false;
-    $('count').textContent = recent.length;
+    $('count').textContent = checkedCount;
     $('recentList').innerHTML = recent.map(function (r) {
       return '<li><span>' + esc(r.name) + '</span><span><span class="tb">' + esc(r.table) +
         '</span> <span class="t">' + hhmm(r.at, true) + '</span></span></li>';
@@ -344,14 +370,18 @@
       beep(false);
       setBanner('error', esc(err.message || 'เชื่อมต่อไม่สำเร็จ'));
       $('personCard').hidden = false;
-    }).then(function () { busy = false; });
+    }).then(function () { busy = false; }, function () { busy = false; });
   }
 
   function doCheckIn(token, reg) {
+    if ($('btnConfirm').disabled) return Promise.resolve();
     setBanner('info', 'กำลังบันทึก...');
     $('btnConfirm').disabled = true;
+    busy = true;                       // กันการสแกนใบใหม่แทรกจนหน้าจอสลับไปมา
+    var done = false;
     return callApi('checkin', { t: token }).then(function (res) {
       if (res.ok) {
+        done = true;
         beep(true); buzz(70);
         setBanner('success', '<strong>เช็คอินสำเร็จ</strong> เวลา ' + hhmm(res.checkIn.checkedInAt, true) +
           ' · ' + seatLabel(res.registration));
@@ -359,19 +389,26 @@
         addRecent(res.registration.fullName, res.registration.table, res.checkIn.checkedInAt, res.registration.seat);
         $('btnConfirm').hidden = true;
       } else if (res.code === 'ALREADY_CHECKED_IN') {
+        done = true;
         beep(false); buzz([50, 60, 50]);
         setBanner('warning', '<strong>เช็คอินแล้วเมื่อ ' + hhmm(res.checkIn.checkedInAt) + '</strong>');
         $('btnConfirm').hidden = true;
       } else {
         beep(false);
-        setBanner('error', esc(res.message || 'บันทึกไม่สำเร็จ'));
+        setBanner('error', esc(res.message || 'บันทึกไม่สำเร็จ') + '<br>กดบันทึกอีกครั้งได้');
       }
     }).catch(function (err) {
       beep(false);
-      setBanner('error', esc(err.message || 'บันทึกไม่สำเร็จ'));
+      setBanner('error', esc((err && err.message) || 'บันทึกไม่สำเร็จ') + '<br>กดบันทึกอีกครั้งได้');
     }).then(function () {
       $('btnConfirm').disabled = false;
-      currentToken = null;
+      busy = false;
+      // ล้างรหัสเฉพาะเมื่อบันทึกจบจริง ถ้าเน็ตหลุดต้องกดซ้ำได้
+      if (done) currentToken = null;
+      else $('btnConfirm').hidden = false;
+    }, function () {
+      $('btnConfirm').disabled = false;
+      busy = false;
     });
   }
 
@@ -429,6 +466,7 @@
       setupTorch();
       setupFocus();
       startNativeLoop();
+      watchTrackEnded();
       return enableContinuousFocus();
     });
   }
@@ -532,7 +570,12 @@
     if (window.ImageCapture) {
       try {
         var ic = new ImageCapture(t);
-        return ic.takePhoto().then(function (b) { shotSource = 'กล้องถ่ายจริง'; return b; },
+        // บางรุ่น takePhoto ไม่ตอบกลับเลย ต้องมีเวลาจำกัดแล้วถอยไปจับภาพจากวิดีโอแทน
+        var shot = Promise.race([
+          ic.takePhoto(),
+          new Promise(function (_, rej) { setTimeout(function () { rej(new Error('timeout')); }, 4000); })
+        ]);
+        return shot.then(function (b) { shotSource = 'กล้องถ่ายจริง'; return b; },
           function () { shotSource = 'จับจากวิดีโอ'; return canvasShot(); });
       } catch (e) { /* ใช้วิธีจับภาพจากวิดีโอแทน */ }
     }
@@ -550,7 +593,8 @@
   /** อ่าน QR จากภาพนิ่ง ลองตัวถอดรหัสของระบบก่อน แล้วค่อยลองตัวสำรองและภาพครอบกลาง */
   function decodeBlob(blob) {
     shotInfo = shotSource + ' · ' + Math.round((blob.size || 0) / 1024) + ' KB';
-    return createImageBitmap(blob).then(function (bmp) {
+    if (!window.createImageBitmap) return decodeWithLib(blob);   // Safari รุ่นเก่าไม่มีคำสั่งนี้
+    return createImageBitmap(blob).then(shrinkBitmap).then(function (bmp) {
       shotInfo = bmp.width + 'x' + bmp.height + ' · ' + shotInfo;
       if (!window.BarcodeDetector) return null;
       return new BarcodeDetector({ formats: ['qr_code'] }).detect(bmp)
@@ -572,6 +616,21 @@
     });
   }
   /** ครอบกลางภาพ 60% แล้วขยาย 2 เท่า ช่วยกรณี QR เล็กอยู่กลางภาพใหญ่ */
+  /** ย่อภาพให้ด้านยาวไม่เกิน 2000 px ภาพความละเอียดสูงมากทำให้ canvas เกินขีดจำกัดและถอดรหัสช้า */
+  function shrinkBitmap(bmp) {
+    var maxSide = 2000;
+    var side = Math.max(bmp.width, bmp.height);
+    if (side <= maxSide) return Promise.resolve(bmp);
+    try {
+      var k = maxSide / side;
+      var c = document.createElement('canvas');
+      c.width = Math.round(bmp.width * k);
+      c.height = Math.round(bmp.height * k);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      return createImageBitmap(c);
+    } catch (e) { return Promise.resolve(bmp); }
+  }
+
   function centerCrop(bmp) {
     try {
       var side = Math.round(Math.min(bmp.width, bmp.height) * 0.6);
@@ -683,7 +742,7 @@
     nativeTimer = setInterval(function () {
       if (!running || busy || !nativeDetector) return;
       var v = document.querySelector('#reader video');
-      if (!v || !v.videoWidth) return;
+      if (!v || !v.videoWidth || v.paused || v.ended) return;   // วิดีโอหยุดอยู่ = เฟรมค้าง ห้ามอ่านซ้ำ
       nativeDetector.detect(v).then(function (list) {
         if (list && list.length && list[0].rawValue) { nativeHits++; handleToken(list[0].rawValue); }
       }).catch(function () { /* ข้ามเฟรมที่อ่านไม่ได้ */ });
@@ -691,12 +750,49 @@
   }
   function stopNativeLoop() { clearInterval(nativeTimer); nativeTimer = null; }
 
-  function pauseCam() { try { if (running) scanner.pause(true); } catch (e) { /* ignore */ } }
-  function resumeCam() { try { if (running) scanner.resume(); } catch (e) { /* ignore */ } }
+  function pauseCam() {
+    stopNativeLoop();                       // กันตัวอ่านเต็มภาพวนอ่านเฟรมค้างซ้ำ ๆ หลังเช็คอินสำเร็จ
+    try { if (running) scanner.pause(true); } catch (e) { /* ignore */ }
+  }
+  function resumeCam() {
+    try { if (running) scanner.resume(); } catch (e) { /* ignore */ }
+    startNativeLoop();
+  }
+  /** ถ้าระบบปิดกล้องให้ (จอล็อก สลับแอป แอปกล้องแย่ง) ให้เปิดใหม่เองเมื่อกลับมา */
+  function watchTrackEnded() {
+    var t = videoTrack();
+    if (!t) return;
+    t.onended = function () {
+      running = false;
+      stopNativeLoop();
+      $('camMsg').textContent = 'กล้องถูกปิด กำลังเปิดใหม่...';
+      startCam();
+    };
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden || !running) return;
+    var t = videoTrack();
+    if (!t || t.readyState === 'ended') { running = false; stopNativeLoop(); startCam(); }
+  });
+
   function stopCam() {
     stopNativeLoop();
+    clearInterval(autoFocusTimer);
+    clearTimeout(applyZoom.t);
     if (!running) return Promise.resolve();
     return scanner.stop().catch(function () { /* ignore */ }).then(function () { running = false; });
+  }
+
+  /** แปลข้อความผิดพลาดของกล้องเป็นภาษาไทย และเตือนกรณีเปิดผ่านเบราว์เซอร์ในแอป */
+  function cameraErrorText(err) {
+    var name = String((err && (err.name || err.message)) || err);
+    var inApp = /Line\/|FBAN|FBAV|Instagram/i.test(navigator.userAgent || '');
+    var tip = inApp ? ' (กำลังเปิดในแอป กรุณากดเปิดใน Chrome หรือ Safari)' : '';
+    if (/NotAllowed|Permission/i.test(name)) return 'ยังไม่ได้อนุญาตให้ใช้กล้อง กรุณากดอนุญาตแล้วลองอีกครั้ง' + tip;
+    if (/NotFound|DevicesNotFound/i.test(name)) return 'ไม่พบกล้องบนเครื่องนี้' + tip;
+    if (/NotReadable|TrackStart/i.test(name)) return 'กล้องถูกแอปอื่นใช้อยู่ กรุณาปิดแอปกล้องแล้วลองใหม่';
+    if (/Overconstrained/i.test(name)) return 'กล้องไม่รองรับค่าที่ขอ กรุณาเลือกกล้องตัวอื่น';
+    return 'เปิดกล้องไม่สำเร็จ: ' + name + tip;
   }
 
   function startCam() {
@@ -723,7 +819,7 @@
     }).then(function () { setupZoom(); })
       .catch(function (err) {
         running = false;
-        $('camMsg').textContent = 'เปิดกล้องไม่สำเร็จ: ' + (err && err.message ? err.message : err);
+        $('camMsg').textContent = cameraErrorText(err);
         $('btnRetryCam').hidden = false;
       }).then(function () { switching = false; });
   }
@@ -826,19 +922,27 @@
   });
 
   /* ---------- เชื่อมต่อ ---------- */
+  // รับเฉพาะที่อยู่ของ Google Apps Script ที่ลงท้ายด้วย /exec
+  // หน้านี้ส่งรหัสเจ้าหน้าที่ไปให้ปลายทาง จึงห้ามชี้ไปโดเมนอื่นเด็ดขาด
+  var APP_URL_RE = /^https:\/\/script\.google\.com\/(macros|a\/macros\/[^\/]+)\/s\/[A-Za-z0-9_-]{20,}\/exec$/;
   function normalizeUrl(u) {
     u = String(u || '').trim();
     if (!u) return '';
     u = u.split('#')[0];
     var q = u.indexOf('?');
     if (q >= 0) u = u.slice(0, q);
-    return u.replace(/\/+$/, '');
+    u = u.replace(/\/+$/, '');
+    return APP_URL_RE.test(u) ? u : '';
   }
 
   function connect(url, thePin, silent) {
     baseUrl = normalizeUrl(url);
     pin = String(thePin || '').trim();
-    if (!baseUrl || !pin) {
+    if (!baseUrl) {
+      if (!silent) showSetupError(String(url || '').trim() ? 'ลิงก์ไม่ถูกต้อง ต้องเป็น https://script.google.com/macros/s/.../exec (ลงท้าย /exec ไม่ใช่ /dev)' : 'กรุณาใส่ลิงก์และรหัสให้ครบ');
+      return Promise.resolve(false);
+    }
+    if (!pin) {
       if (!silent) showSetupError('กรุณาใส่ลิงก์และรหัสให้ครบ');
       return Promise.resolve(false);
     }
@@ -874,6 +978,7 @@
   }
 
   /* ---------- ผูก event ---------- */
+  $('btnConnect').addEventListener('click', function () { wakeAudio(); }, { once: true });
   $('btnConnect').addEventListener('click', function () {
     $('setupError').hidden = true;
     connect($('inUrl').value, $('inPin').value, false);
@@ -886,9 +991,11 @@
     window.location.reload();
   });
 
+  $('btnConfirm').addEventListener('click', function () { wakeAudio(); }, { once: true });
   $('btnConfirm').addEventListener('click', function () {
     if (currentToken) doCheckIn(currentToken);
   });
+  $('btnNext').addEventListener('click', function () { wakeAudio(); }, { once: true });
   $('btnNext').addEventListener('click', function () {
     hidePerson();
     setBanner('info', 'เล็งกล้องไปที่ QR Code ของผู้เข้างาน');
@@ -910,12 +1017,16 @@
   var wedgeBuf = '', wedgeLast = 0;
   document.addEventListener('keydown', function (e) {
     var el = e.target, tag = el && el.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el && el.isContentEditable)) return;
+    // ข้ามเฉพาะช่องกรอกข้อความจริง ๆ ถ้าโฟกัสค้างที่ปุ่มหรือ dropdown ต้องรับรหัสจากเครื่องสแกนได้
+    var typing = (tag === 'TEXTAREA') || (el && el.isContentEditable) ||
+      (tag === 'INPUT' && ['text', 'password', 'url', 'search', 'tel', 'number'].indexOf((el.type || 'text').toLowerCase()) >= 0);
+    if (typing) return;
     var now = Date.now();
-    if (now - wedgeLast > 250) wedgeBuf = '';   // พิมพ์ช้ากว่านี้ถือว่าเป็นคนพิมพ์ ไม่ใช่เครื่องสแกน
+    if (now - wedgeLast > 600) wedgeBuf = '';   // เครื่องสแกนบลูทูธบางรุ่นส่งช้า จึงเผื่อเวลาไว้มากขึ้น
     wedgeLast = now;
     if (e.key === 'Enter') {
       if (wedgeBuf.length >= 6) { e.preventDefault(); lastSeen = { token: '', at: 0 }; handleToken(wedgeBuf); }
+      else if (wedgeBuf.length && tag === 'BUTTON') e.preventDefault();
       wedgeBuf = '';
     } else if (e.key && e.key.length === 1) {
       wedgeBuf += e.key;
@@ -936,16 +1047,24 @@
   var fromHash = {};
   hash.split('&').forEach(function (kv) {
     var i = kv.indexOf('=');
-    if (i > 0) fromHash[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+    if (i <= 0) return;
+    try { fromHash[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1)); }
+    catch (e) { /* ข้อความใน hash เพี้ยน ข้ามไป ไม่ให้ทั้งหน้าหยุดทำงาน */ }
   });
 
   // ลิงก์ Web App ของงานนี้ (ใส่ไว้ให้ จะได้กรอกแค่รหัสเจ้าหน้าที่)
   var DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbyIqCz1g2w-WLh_Mgpe6GSDxF8vV3EP8ZcqwOqCGKfNXVpZtD69JvjfA1BSBlvQWdD1/exec';
-  var savedUrl = fromHash.url || get(KEY_URL) || DEFAULT_URL;
-  var savedPin = fromHash.pin || get(KEY_PIN) || '';
-  $('inUrl').value = savedUrl;
-  $('inPin').value = savedPin;
-  if (savedUrl && savedPin) {
+  // ลิงก์และรหัสที่ติดมากับ #hash ไม่เชื่อถือ ใส่ให้ในช่องได้ แต่ต้องกดเชื่อมต่อเอง
+  // (มิฉะนั้นลิงก์ปลอมจะพารหัสที่จำไว้ไปให้ปลายทางของผู้อื่นทันที)
+  var hashUrl = normalizeUrl(fromHash.url);
+  var savedUrl = get(KEY_URL) || DEFAULT_URL;
+  var savedPin = get(KEY_PIN) || '';
+  var fromLink = !!(fromHash.url || fromHash.pin);
+  $('inUrl').value = hashUrl || savedUrl;
+  $('inPin').value = fromHash.pin || savedPin;
+  if (fromHash.url && !hashUrl) {
+    showSetupError('ลิงก์ที่ส่งมาไม่ใช่ที่อยู่ของระบบ (ต้องเป็น script.google.com/macros/s/.../exec)');
+  } else if (savedUrl && savedPin && !fromLink) {
     connect(savedUrl, savedPin, true).then(function (okay) {
       if (!okay) showSetupError('เชื่อมต่ออัตโนมัติไม่สำเร็จ กรุณาตรวจสอบลิงก์และรหัสอีกครั้ง');
     });
