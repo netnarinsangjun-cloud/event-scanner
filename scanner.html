@@ -63,6 +63,7 @@
   .cam-tool span { min-width: 64px; }
   .cam-tool select, .cam-tool input[type=range] { flex: 1; font: inherit; padding: 6px 8px; border: 1px solid var(--border, #d0d7e2); border-radius: 8px; background: #fff; }
   .cam-tool input[type=range] { padding: 0; border: 0; }
+  .btn-shot { width: 100%; margin-top: 4px; }
   .cam-buttons { gap: 8px; }
   .cam-buttons .zoom-reset { flex: 1; }
   .zoom-reset { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--border, #d0d7e2); background: #fff; border-radius: 8px; }
@@ -155,10 +156,12 @@
             <input type="range" id="zoomRange" min="1" max="5" step="0.1" value="1">
             <button type="button" id="btnZoomReset" class="zoom-reset">รีเซ็ต</button>
           </div>
+          <button type="button" id="btnShot" class="btn btn-primary btn-shot">ถ่ายภาพแล้วอ่าน QR</button>
           <div class="cam-tool cam-buttons">
             <button type="button" id="btnFocus" class="zoom-reset">โฟกัสใหม่</button>
             <button type="button" id="btnTorch" class="zoom-reset" hidden>เปิดไฟฉาย</button>
           </div>
+          <div id="fileReader" hidden></div>
           <div class="muted small" id="zoomNote" hidden></div>
           <div class="muted small" id="focusNote">แตะที่ภาพเพื่อสั่งโฟกัส ถ้ายังไม่ชัดให้ถือห่าง QR ประมาณ 20-30 ซม.</div>
         </div>
@@ -389,7 +392,10 @@
   /** ขอภาพความละเอียดสูง ยิ่งละเอียด QR ยิ่งอ่านง่ายแม้กล้องมุมกว้าง */
   function applyHighRes() {
     try {
-      return scanner.applyVideoConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } })
+      var caps = trackCaps();
+      var w = (caps && caps.width && caps.width.max) ? Math.min(caps.width.max, 2560) : 1920;
+      var h = (caps && caps.height && caps.height.max) ? Math.min(caps.height.max, 1440) : 1080;
+      return scanner.applyVideoConstraints({ width: { ideal: w }, height: { ideal: h } })
         .catch(function () { /* กล้องไม่รองรับก็ใช้ค่าเดิม */ });
     } catch (e) { return Promise.resolve(); }
   }
@@ -411,6 +417,7 @@
       currentCamId = id || currentCamId;
       return applyHighRes().then(function () {
         setupTorch();
+        setupFocus();
         return enableContinuousFocus();
       });
     });
@@ -469,6 +476,85 @@
     btn.textContent = 'เปิดไฟฉาย';
     btn.dataset.on = '';
   }
+  /* ---------- ถ่ายภาพนิ่งแล้วอ่าน QR ----------
+   * ภาพนิ่งได้ความละเอียดเต็มของกล้องและกล้องจะโฟกัสเองตอนถ่าย
+   * ใช้ได้ผลกว่ามากกับ QR ที่มีจุดถี่หรือถ่ายจากหน้าจอมือถือ                       */
+  var fileScanner = null;
+  function ensureFileScanner() {
+    if (!fileScanner && window.Html5Qrcode) {
+      try { fileScanner = new Html5Qrcode('fileReader'); } catch (e) { fileScanner = null; }
+    }
+    return fileScanner;
+  }
+  function canvasShot() {
+    return new Promise(function (resolve, reject) {
+      var v = document.querySelector('#reader video');
+      if (!v || !v.videoWidth) { reject(new Error('ยังไม่มีภาพจากกล้อง')); return; }
+      var c = document.createElement('canvas');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      c.toBlob(function (b) { b ? resolve(b) : reject(new Error('จับภาพไม่สำเร็จ')); }, 'image/jpeg', 0.95);
+    });
+  }
+  function shotBlob() {
+    var t = videoTrack();
+    if (!t) return Promise.reject(new Error('ไม่พบกล้อง'));
+    if (window.ImageCapture) {
+      try {
+        var ic = new ImageCapture(t);
+        return ic.takePhoto().catch(function () { return canvasShot(); });
+      } catch (e) { /* ใช้วิธีจับภาพจากวิดีโอแทน */ }
+    }
+    return canvasShot();
+  }
+  function decodeWithLib(blob) {
+    var fs = ensureFileScanner();
+    if (!fs) return Promise.resolve(null);
+    var file = new File([blob], 'shot.jpg', { type: blob.type || 'image/jpeg' });
+    if (fs.scanFileV2) return fs.scanFileV2(file, false).then(function (r) { return r.decodedText; }, function () { return null; });
+    return fs.scanFile(file, false).then(function (t) { return t; }, function () { return null; });
+  }
+  function decodeBlob(blob) {
+    if (window.BarcodeDetector) {
+      return createImageBitmap(blob).then(function (bmp) {
+        return new BarcodeDetector({ formats: ['qr_code'] }).detect(bmp);
+      }).then(function (list) {
+        return (list && list.length) ? list[0].rawValue : decodeWithLib(blob);
+      }).catch(function () { return decodeWithLib(blob); });
+    }
+    return decodeWithLib(blob);
+  }
+  function shootAndDecode() {
+    var btn = $('btnShot');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    var label = btn.textContent;
+    btn.textContent = 'กำลังถ่าย...';
+    setBanner('info', 'กำลังถ่ายภาพและอ่าน QR...');
+    shotBlob().then(decodeBlob).then(function (text) {
+      if (text) { lastSeen = { token: '', at: 0 }; handleToken(text); return; }
+      beep(false); buzz([50, 60, 50]);
+      setBanner('error', '<strong>อ่านไม่ออก</strong><br>ให้ QR อยู่กลางกรอบ ถือนิ่ง ๆ แล้วกดถ่ายอีกครั้ง');
+    }).catch(function (err) {
+      setBanner('error', 'ถ่ายภาพไม่สำเร็จ: ' + esc(err && err.message ? err.message : err));
+    }).then(function () {
+      btn.disabled = false; btn.textContent = label;
+    });
+  }
+  $('btnShot').addEventListener('click', shootAndDecode);
+
+  /** ถ้ากล้องไม่เปิดให้สั่งโฟกัส ให้ซ่อนปุ่มโฟกัสและแนะนำให้ใช้ปุ่มถ่ายภาพแทน */
+  function setupFocus() {
+    var caps = trackCaps();
+    var modes = (caps && caps.focusMode) || [];
+    var supported = modes.length > 0;
+    $('btnFocus').hidden = !supported;
+    if (!supported) {
+      $('focusNote').textContent = 'มือถือรุ่นนี้สั่งโฟกัสจากหน้าเว็บไม่ได้ ถ้าสแกนไม่ติดใน 2-3 วินาที ให้กดปุ่มถ่ายภาพแล้วอ่าน QR';
+    }
+    return supported;
+  }
+
   $('btnFocus').addEventListener('click', function () { refocus(null); });
   $('btnTorch').addEventListener('click', function () {
     var on = this.dataset.on !== '1', btn = this;
@@ -591,6 +677,7 @@
   }
   function zoomHint(z) {
     var note = $('focusNote');
+    if ($('btnFocus').hidden) return;      // รุ่นที่สั่งโฟกัสไม่ได้ ใช้ข้อความแนะนำปุ่มถ่ายภาพไว้แทน
     note.textContent = Number(z) > 1.6
       ? 'ซูมมากทำให้โฟกัสระยะใกล้ยาก ถ้าไม่ติดให้กดรีเซ็ตกลับ 1x แล้วถือห่าง 20-30 ซม.'
       : 'แตะที่ภาพเพื่อสั่งโฟกัส ถ้ายังไม่ชัดให้ถือห่าง QR ประมาณ 20-30 ซม.';
