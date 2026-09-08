@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>สแกนเช็คอิน</title>
+<meta name="theme-color" content="#0B4EA2">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --primary: #0B4EA2; --primary-dark: #083C7D; --primary-soft: #E8F0FB;
+    --success: #1FA463; --success-soft: #E6F6EE; --success-dark: #136B41;
+    --warning: #F0A020; --warning-soft: #FFF6E5; --warning-dark: #8A5A00;
+    --danger: #D93025; --danger-soft: #FDECEA; --danger-dark: #9B1C13;
+    --bg: #F5F7FA; --text: #1A2233; --muted: #6B7280; --border: #E3E8EF; --border-strong: #CBD3DF;
+    --shadow: 0 1px 2px rgba(16,24,40,.05), 0 4px 14px rgba(16,24,40,.06);
+    --font: "Prompt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 16px; line-height: 1.5; }
+  [hidden] { display: none !important; }
+  .wrap { max-width: 560px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; background: #fff; }
+  header { position: sticky; top: 0; z-index: 10; background: var(--primary); color: #fff; padding: 12px 16px; padding-top: calc(12px + env(safe-area-inset-top)); display: flex; align-items: center; gap: 10px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; flex: 1; }
+  header .count { font-size: 13px; background: rgba(255,255,255,.2); padding: 4px 10px; border-radius: 999px; }
+  .icon-btn { background: rgba(255,255,255,.15); border: 0; color: #fff; width: 36px; height: 36px; border-radius: 9px; cursor: pointer; font-size: 18px; line-height: 1; }
+  main { flex: 1; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  h2 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  label { display: block; font-size: 14px; font-weight: 500; margin: 14px 0 6px; }
+  input[type="text"], input[type="url"], input[type="password"] {
+    width: 100%; min-height: 48px; padding: 10px 14px; border: 1px solid var(--border-strong);
+    border-radius: 8px; font-family: inherit; font-size: 16px; outline: none; background: #fff; color: var(--text);
+  }
+  input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(11,78,162,.15); }
+  .btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 52px;
+    border: 1px solid transparent; border-radius: 10px; font-family: inherit; font-size: 17px; font-weight: 500; cursor: pointer; margin-top: 14px; }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:active { background: var(--primary-dark); }
+  .btn-outline { background: #fff; color: var(--primary); border-color: var(--primary); }
+  .btn-xl { min-height: 62px; font-size: 19px; font-weight: 600; }
+  .btn:disabled { opacity: .6; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 16px; margin-bottom: 14px; }
+  #reader { width: 100%; border-radius: 12px; overflow: hidden; background: #111; }
+  #reader video { display: block; width: 100% !important; }
+  .banner { padding: 12px 14px; border-radius: 8px; font-size: 15px; line-height: 1.45; margin-bottom: 14px; }
+  .banner-success { background: var(--success-soft); color: var(--success-dark); border-left: 4px solid var(--success); }
+  .banner-warning { background: var(--warning-soft); color: var(--warning-dark); border-left: 4px solid var(--warning); }
+  .banner-error { background: var(--danger-soft); color: var(--danger-dark); border-left: 4px solid var(--danger); }
+  .banner-info { background: var(--primary-soft); color: var(--primary-dark); }
+  .person { text-align: center; padding: 6px 0 2px; }
+  .person .name { font-size: 24px; font-weight: 700; line-height: 1.25; }
+  .person .org { color: var(--muted); font-size: 14px; }
+  .table-box { margin: 14px auto 4px; padding: 10px 18px 6px; border: 2px solid var(--primary); background: var(--primary-soft); border-radius: 12px; width: min(100%, 190px); }
+  .table-box .lbl { font-size: 13px; }
+  .table-box .num { font-size: 48px; font-weight: 700; color: var(--primary); line-height: 1.05; }
+  .toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; margin: 16px 0 0; color: var(--muted); }
+  .toggle input { width: 20px; height: 20px; accent-color: var(--primary); }
+  .recent { margin-top: 4px; }
+  .recent h3 { font-size: 14px; color: var(--muted); font-weight: 500; margin: 0 0 8px; }
+  .recent li { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .recent ul { list-style: none; margin: 0; padding: 0; }
+  .recent li:last-child { border-bottom: 0; }
+  .recent .t { font-family: var(--mono); color: var(--muted); font-size: 13px; }
+  .recent .tb { font-weight: 600; color: var(--primary); }
+  code { font-family: var(--mono); font-size: .9em; background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; }
+  .help { font-size: 13px; color: var(--muted); line-height: 1.8; }
+  .help ol { padding-left: 20px; margin: 8px 0; }
+  .manual { margin-top: 18px; font-size: 14px; }
+  .manual summary { cursor: pointer; color: var(--primary); font-weight: 500; }
+  .manual-row { display: flex; gap: 8px; margin-top: 10px; }
+  .manual-row input { flex: 1; font-family: var(--mono); text-transform: uppercase; }
+  .manual-row .btn { width: auto; margin-top: 0; padding: 0 18px; min-height: 48px; font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">สแกนเช็คอิน</h1>
+    <span class="count" id="count" hidden>0</span>
+    <button type="button" class="icon-btn" id="btnSettings" title="ตั้งค่า" hidden>⚙</button>
+  </header>
+
+  <main>
+    <!-- ---------- ตั้งค่า ---------- -->
+    <section id="setup">
+      <h2>ตั้งค่าครั้งแรก</h2>
+      <p class="muted small">ใส่ลิงก์ระบบและรหัสเจ้าหน้าที่ครั้งเดียว เครื่องนี้จะจำไว้ให้</p>
+      <div id="setupError" class="banner banner-error" hidden></div>
+      <label for="inUrl">ลิงก์ Web App (ลงท้ายด้วย /exec)</label>
+      <input id="inUrl" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" spellcheck="false">
+      <label for="inPin">รหัสเจ้าหน้าที่</label>
+      <input id="inPin" type="password" inputmode="numeric" placeholder="เช่น 1234" autocomplete="current-password">
+      <button type="button" class="btn btn-primary" id="btnConnect">
+        <span id="connectLabel">เชื่อมต่อ</span>
+      </button>
+      <div class="help">
+        <strong>วิธีหาลิงก์:</strong>
+        <ol>
+          <li>เปิดหน้า Dashboard ของระบบ</li>
+          <li>คัดลอกลิงก์จากช่องเบราว์เซอร์ ตัดตั้งแต่ <code>?page=</code> ทิ้ง</li>
+          <li>จะเหลือลิงก์ที่ลงท้ายด้วย <code>/exec</code></li>
+        </ol>
+        หน้านี้ต้องเปิดผ่าน https จึงจะใช้กล้องได้
+      </div>
+    </section>
+
+    <!-- ---------- สแกน ---------- -->
+    <section id="scan" hidden>
+      <div id="banner" class="banner banner-info">เล็งกล้องไปที่ QR Code ของผู้เข้างาน</div>
+
+      <div class="card" id="personCard" hidden>
+        <div class="person">
+          <div class="name" id="pName"></div>
+          <div class="org" id="pOrg"></div>
+          <div class="table-box">
+            <div class="lbl">โต๊ะ</div>
+            <div class="num" id="pTable">–</div>
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary btn-xl" id="btnConfirm" hidden>บันทึกเช็คอิน</button>
+        <button type="button" class="btn btn-outline" id="btnNext">สแกนคนถัดไป</button>
+      </div>
+
+      <div id="readerWrap">
+        <div id="reader"></div>
+        <div id="camMsg" class="muted small" style="margin-top:8px">กำลังเปิดกล้อง...</div>
+        <button type="button" class="btn btn-outline" id="btnRetryCam" hidden>ลองเปิดกล้องอีกครั้ง</button>
+      </div>
+
+      <label class="toggle">
+        <input type="checkbox" id="autoMode" checked>
+        <span>เช็คอินอัตโนมัติทันทีที่สแกน</span>
+      </label>
+
+      <details class="manual">
+        <summary>ใส่รหัสเอง (กรณี QR เสียหรือกล้องมีปัญหา)</summary>
+        <div class="manual-row">
+          <input id="manualCode" type="text" placeholder="เช่น EVAB12CD34" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn btn-outline" id="btnManual">ค้นหา</button>
+        </div>
+      </details>
+
+      <div class="recent">
+        <h3>เช็คอินล่าสุดบนเครื่องนี้</h3>
+        <ul id="recentList"><li class="muted">ยังไม่มีรายการ</li></ul>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var KEY_URL = 'scanner_url', KEY_PIN = 'scanner_pin', KEY_AUTO = 'scanner_auto';
+  var baseUrl = '', pin = '', scanner = null, running = false, busy = false, currentToken = null;
+  var lastSeen = { token: '', at: 0 };
+  var recent = [];
+
+  function $(id) { return document.getElementById(id); }
+  function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+  function del(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function hhmm(v, withSec) {
+    var d = v ? new Date(v) : new Date();
+    if (isNaN(d.getTime())) return '-';
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + (withSec ? ':' + pad2(d.getSeconds()) : '');
+  }
+  function beep(good) {
+    try {
+      var C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return;
+      beep.c = beep.c || new C();
+      var o = beep.c.createOscillator(), g = beep.c.createGain();
+      o.type = 'sine'; o.frequency.value = good ? 1250 : 320; g.gain.value = 0.08;
+      o.connect(g); g.connect(beep.c.destination); o.start(); o.stop(beep.c.currentTime + (good ? 0.12 : 0.3));
+    } catch (e) { /* ignore */ }
+  }
+  function buzz(p) { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) { /* ignore */ } }
+
+  /* ---------- JSONP (เลี่ยงปัญหา CORS ของ Apps Script) ---------- */
+  function jsonp(params) {
+    return new Promise(function (resolve, reject) {
+      var cb = 'scb_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      var qs = Object.keys(params).map(function (k) {
+        return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+      }).join('&');
+      var el = document.createElement('script');
+      var done = false;
+      function cleanup() {
+        try { delete window[cb]; } catch (e) { window[cb] = undefined; }
+        if (el.parentNode) el.parentNode.removeChild(el);
+        clearTimeout(timer);
+      }
+      var timer = setTimeout(function () {
+        if (!done) { done = true; cleanup(); reject(new Error('หมดเวลาเชื่อมต่อ ตรวจสอบสัญญาณอินเทอร์เน็ต')); }
+      }, 25000);
+      window[cb] = function (data) { if (done) return; done = true; cleanup(); resolve(data); };
+      el.onerror = function () {
+        if (!done) { done = true; cleanup(); reject(new Error('เชื่อมต่อไม่สำเร็จ ตรวจสอบว่าลิงก์ถูกต้องและตั้ง Who has access เป็น Anyone')); }
+      };
+      el.src = baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + qs + '&callback=' + cb;
+      document.head.appendChild(el);
+    });
+  }
+  function callApi(api, extra) {
+    var params = { api: api, pin: pin };
+    if (extra) Object.keys(extra).forEach(function (k) { params[k] = extra[k]; });
+    return jsonp(params);
+  }
+
+  /* ---------- UI ---------- */
+  function setBanner(type, html) {
+    var b = $('banner');
+    b.className = 'banner banner-' + type;
+    b.innerHTML = html;
+  }
+  function showPerson(reg) {
+    $('pName').textContent = reg.fullName;
+    $('pOrg').textContent = reg.organization || '';
+    $('pTable').textContent = reg.table;
+    $('personCard').hidden = false;
+  }
+  function hidePerson() {
+    $('personCard').hidden = true;
+    $('btnConfirm').hidden = true;
+    currentToken = null;
+  }
+  function addRecent(name, table, at) {
+    recent.unshift({ name: name, table: table, at: at });
+    recent = recent.slice(0, 15);
+    $('count').hidden = false;
+    $('count').textContent = recent.length;
+    $('recentList').innerHTML = recent.map(function (r) {
+      return '<li><span>' + esc(r.name) + '</span><span><span class="tb">' + esc(r.table) +
+        '</span> <span class="t">' + hhmm(r.at, true) + '</span></span></li>';
+    }).join('');
+  }
+
+  /* ---------- ตรรกะการสแกน ---------- */
+  function handleToken(raw) {
+    var text = String(raw || '').trim();
+    if (!text) return;
+    var m = text.match(/[?&]t=([A-Za-z0-9]+)/);
+    var token = (m ? m[1] : text).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    if (!token) return;
+
+    var now = Date.now();
+    if (token === lastSeen.token && now - lastSeen.at < 2500) return;
+    lastSeen = { token: token, at: now };
+    if (busy) return;
+    busy = true;
+
+    pauseCam();
+    hidePerson();
+    setBanner('info', 'กำลังตรวจสอบ...');
+
+    callApi('lookup', { t: token }).then(function (res) {
+      if (!res.ok) {
+        beep(false); buzz([50, 60, 50]);
+        setBanner('error', '<strong>QR Code ไม่ถูกต้อง</strong><br>' + esc(res.message || ''));
+        $('personCard').hidden = false;
+        return;
+      }
+      showPerson(res.registration);
+      if (res.checkedIn) {
+        beep(false); buzz([50, 60, 50]);
+        setBanner('warning', '<strong>เช็คอินแล้วเมื่อ ' + hhmm(res.checkIn.checkedInAt) + '</strong><br>QR นี้ถูกใช้ไปแล้ว');
+        return;
+      }
+      if ($('autoMode').checked) {
+        return doCheckIn(token, res.registration);
+      }
+      beep(true);
+      setBanner('success', '<strong>พบข้อมูล</strong> — ตรวจสอบแล้วกดบันทึกเช็คอิน');
+      currentToken = token;
+      $('btnConfirm').hidden = false;
+    }).catch(function (err) {
+      beep(false);
+      setBanner('error', esc(err.message || 'เชื่อมต่อไม่สำเร็จ'));
+      $('personCard').hidden = false;
+    }).then(function () { busy = false; });
+  }
+
+  function doCheckIn(token, reg) {
+    setBanner('info', 'กำลังบันทึก...');
+    $('btnConfirm').disabled = true;
+    return callApi('checkin', { t: token }).then(function (res) {
+      if (res.ok) {
+        beep(true); buzz(70);
+        setBanner('success', '<strong>เช็คอินสำเร็จ</strong> เวลา ' + hhmm(res.checkIn.checkedInAt, true) +
+          ' · โต๊ะ ' + esc(res.registration.table));
+        showPerson(res.registration);
+        addRecent(res.registration.fullName, res.registration.table, res.checkIn.checkedInAt);
+        $('btnConfirm').hidden = true;
+      } else if (res.code === 'ALREADY_CHECKED_IN') {
+        beep(false); buzz([50, 60, 50]);
+        setBanner('warning', '<strong>เช็คอินแล้วเมื่อ ' + hhmm(res.checkIn.checkedInAt) + '</strong>');
+        $('btnConfirm').hidden = true;
+      } else {
+        beep(false);
+        setBanner('error', esc(res.message || 'บันทึกไม่สำเร็จ'));
+      }
+    }).catch(function (err) {
+      beep(false);
+      setBanner('error', esc(err.message || 'บันทึกไม่สำเร็จ'));
+    }).then(function () {
+      $('btnConfirm').disabled = false;
+      currentToken = null;
+    });
+  }
+
+  /* ---------- กล้อง ---------- */
+  function startCam() {
+    $('btnRetryCam').hidden = true;
+    if (!window.Html5Qrcode) {
+      $('camMsg').textContent = 'โหลดไลบรารีกล้องไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วรีเฟรช';
+      return;
+    }
+    if (running) return;
+    scanner = scanner || new Html5Qrcode('reader');
+    $('camMsg').textContent = 'กำลังเปิดกล้อง... กรุณากดอนุญาต';
+    scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 240, height: 240 } },
+      function (text) { handleToken(text); },
+      function () { /* ข้ามข้อผิดพลาดระหว่างเล็ง */ }
+    ).then(function () {
+      running = true;
+      $('camMsg').textContent = 'เล็งกล้องไปที่ QR Code';
+    }).catch(function (err) {
+      running = false;
+      $('camMsg').textContent = 'เปิดกล้องไม่สำเร็จ: ' + (err && err.message ? err.message : err);
+      $('btnRetryCam').hidden = false;
+    });
+  }
+  function pauseCam() { try { if (running) scanner.pause(true); } catch (e) { /* ignore */ } }
+  function resumeCam() { try { if (running) scanner.resume(); } catch (e) { /* ignore */ } }
+
+  /* ---------- เชื่อมต่อ ---------- */
+  function normalizeUrl(u) {
+    u = String(u || '').trim();
+    if (!u) return '';
+    u = u.split('#')[0];
+    var q = u.indexOf('?');
+    if (q >= 0) u = u.slice(0, q);
+    return u.replace(/\/+$/, '');
+  }
+
+  function connect(url, thePin, silent) {
+    baseUrl = normalizeUrl(url);
+    pin = String(thePin || '').trim();
+    if (!baseUrl || !pin) {
+      if (!silent) showSetupError('กรุณาใส่ลิงก์และรหัสให้ครบ');
+      return Promise.resolve(false);
+    }
+    $('btnConnect').disabled = true;
+    $('connectLabel').textContent = 'กำลังเชื่อมต่อ...';
+    return callApi('auth', {}).then(function (res) {
+      if (!res.ok) {
+        if (!silent) showSetupError(res.message || 'รหัสไม่ถูกต้อง');
+        return false;
+      }
+      set(KEY_URL, baseUrl);
+      set(KEY_PIN, pin);
+      $('setup').hidden = true;
+      $('scan').hidden = false;
+      $('btnSettings').hidden = false;
+      $('title').textContent = (res.settings && res.settings.eventName) || 'สแกนเช็คอิน';
+      startCam();
+      return true;
+    }).catch(function (err) {
+      if (!silent) showSetupError(err.message || 'เชื่อมต่อไม่สำเร็จ');
+      return false;
+    }).then(function (okay) {
+      $('btnConnect').disabled = false;
+      $('connectLabel').textContent = 'เชื่อมต่อ';
+      return okay;
+    });
+  }
+
+  function showSetupError(msg) {
+    var el = $('setupError');
+    el.hidden = false;
+    el.textContent = msg;
+  }
+
+  /* ---------- ผูก event ---------- */
+  $('btnConnect').addEventListener('click', function () {
+    $('setupError').hidden = true;
+    connect($('inUrl').value, $('inPin').value, false);
+  });
+  $('inPin').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('btnConnect').click(); });
+
+  $('btnSettings').addEventListener('click', function () {
+    if (!window.confirm('ต้องการเปลี่ยนลิงก์หรือรหัสเจ้าหน้าที่ใช่หรือไม่?')) return;
+    del(KEY_URL); del(KEY_PIN);
+    window.location.reload();
+  });
+
+  $('btnConfirm').addEventListener('click', function () {
+    if (currentToken) doCheckIn(currentToken);
+  });
+  $('btnNext').addEventListener('click', function () {
+    hidePerson();
+    setBanner('info', 'เล็งกล้องไปที่ QR Code ของผู้เข้างาน');
+    lastSeen = { token: '', at: 0 };
+    resumeCam();
+  });
+  $('btnRetryCam').addEventListener('click', startCam);
+
+  $('btnManual').addEventListener('click', function () {
+    var v = $('manualCode').value.trim();
+    if (!v) { $('manualCode').focus(); return; }
+    lastSeen = { token: '', at: 0 };
+    handleToken(v);
+    $('manualCode').value = '';
+  });
+  $('manualCode').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); $('btnManual').click(); }
+  });
+
+  $('autoMode').checked = get(KEY_AUTO) !== '0';
+  $('autoMode').addEventListener('change', function () {
+    set(KEY_AUTO, $('autoMode').checked ? '1' : '0');
+  });
+
+  // รับค่าจาก URL: scanner.html#url=...&pin=1234
+  var hash = window.location.hash.replace(/^#/, '');
+  var fromHash = {};
+  hash.split('&').forEach(function (kv) {
+    var i = kv.indexOf('=');
+    if (i > 0) fromHash[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+  });
+
+  // ลิงก์ Web App ของงานนี้ (ใส่ไว้ให้ จะได้กรอกแค่รหัสเจ้าหน้าที่)
+  var DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbyIqCz1g2w-WLh_Mgpe6GSDxF8vV3EP8ZcqwOqCGKfNXVpZtD69JvjfA1BSBlvQWdD1/exec';
+  var savedUrl = fromHash.url || get(KEY_URL) || DEFAULT_URL;
+  var savedPin = fromHash.pin || get(KEY_PIN) || '';
+  $('inUrl').value = savedUrl;
+  $('inPin').value = savedPin;
+  if (savedUrl && savedPin) {
+    connect(savedUrl, savedPin, true).then(function (okay) {
+      if (!okay) showSetupError('เชื่อมต่ออัตโนมัติไม่สำเร็จ กรุณาตรวจสอบลิงก์และรหัสอีกครั้ง');
+    });
+  }
+  if (window.location.hash) history.replaceState(null, '', window.location.pathname);
+})();
+</script>
+</body>
+</html>
