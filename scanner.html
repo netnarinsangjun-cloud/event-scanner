@@ -377,7 +377,7 @@
 
   /** ไลบรารีรับได้แค่คีย์เดียว: ระบุกล้องอย่างเดียว ความละเอียด/ซูมค่อยตั้งหลังเปิด */
   function cameraSource(id) {
-    return id ? { deviceId: { exact: id } } : { facingMode: { ideal: 'environment' } };
+    return id ? { deviceId: { exact: id } } : { facingMode: 'environment' };
   }
   /** ขอภาพความละเอียดสูง ยิ่งละเอียด QR ยิ่งอ่านง่ายแม้กล้องมุมกว้าง */
   function applyHighRes() {
