@@ -375,14 +375,16 @@
 
   function savedZoom() { var z = parseFloat(get(KEY_ZOOM)); return (!isNaN(z) && z > 0) ? z : 0; }
 
-  /** ขอภาพความละเอียดสูงและซูมตามค่าที่จำไว้ ยิ่งละเอียด QR ยิ่งอ่านง่ายแม้กล้องมุมกว้าง */
-  function videoConstraints(id) {
-    var c = id ? { deviceId: { exact: id } } : { facingMode: { ideal: 'environment' } };
-    c.width = { ideal: 1920 };
-    c.height = { ideal: 1080 };
-    var z = savedZoom();
-    if (z > 1) c.advanced = [{ zoom: z }];
-    return c;
+  /** ไลบรารีรับได้แค่คีย์เดียว: ระบุกล้องอย่างเดียว ความละเอียด/ซูมค่อยตั้งหลังเปิด */
+  function cameraSource(id) {
+    return id ? { deviceId: { exact: id } } : { facingMode: { ideal: 'environment' } };
+  }
+  /** ขอภาพความละเอียดสูง ยิ่งละเอียด QR ยิ่งอ่านง่ายแม้กล้องมุมกว้าง */
+  function applyHighRes() {
+    try {
+      return scanner.applyVideoConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } })
+        .catch(function () { /* กล้องไม่รองรับก็ใช้ค่าเดิม */ });
+    } catch (e) { return Promise.resolve(); }
   }
   var SCAN_CONFIG = {
     fps: 10,
@@ -394,9 +396,10 @@
 
   function startWith(id) {
     scanner = scanner || new Html5Qrcode('reader');
-    return scanner.start(videoConstraints(id), SCAN_CONFIG, onScan, onScanErr).then(function () {
+    return scanner.start(cameraSource(id), SCAN_CONFIG, onScan, onScanErr).then(function () {
       running = true;
       currentCamId = id || currentCamId;
+      return applyHighRes();
     });
   }
   function stopCam() {
