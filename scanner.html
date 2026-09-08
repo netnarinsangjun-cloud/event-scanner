@@ -57,7 +57,9 @@
   .person { text-align: center; padding: 6px 0 2px; }
   .person .name { font-size: 24px; font-weight: 700; line-height: 1.25; }
   .person .org { color: var(--muted); font-size: 14px; }
-  .table-box { margin: 14px auto 4px; padding: 10px 18px 6px; border: 2px solid var(--primary); background: var(--primary-soft); border-radius: 12px; width: min(100%, 190px); }
+  .seat-row { display: flex; gap: 10px; justify-content: center; margin: 14px 0 4px; }
+  .table-box { padding: 10px 18px 6px; border: 2px solid var(--primary); background: var(--primary-soft); border-radius: 12px; min-width: 130px; }
+  .card-type { display: inline-block; margin-top: 6px; padding: 2px 10px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-size: 13px; font-weight: 600; }
   .table-box .lbl { font-size: 13px; }
   .table-box .num { font-size: 48px; font-weight: 700; color: var(--primary); line-height: 1.05; }
   .toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; margin: 16px 0 0; color: var(--muted); }
@@ -119,10 +121,17 @@
         <div class="person">
           <div class="name" id="pName"></div>
           <div class="org" id="pOrg"></div>
-          <div class="table-box">
-            <div class="lbl">โต๊ะ</div>
-            <div class="num" id="pTable">–</div>
+          <div class="seat-row">
+            <div class="table-box">
+              <div class="lbl">โต๊ะ</div>
+              <div class="num" id="pTable">–</div>
+            </div>
+            <div class="table-box">
+              <div class="lbl">ที่นั่ง</div>
+              <div class="num" id="pSeat">–</div>
+            </div>
           </div>
+          <div class="card-type" id="pType" hidden></div>
         </div>
         <button type="button" class="btn btn-primary btn-xl" id="btnConfirm" hidden>บันทึกเช็คอิน</button>
         <button type="button" class="btn btn-outline" id="btnNext">สแกนคนถัดไป</button>
@@ -230,18 +239,22 @@
     b.innerHTML = html;
   }
   function showPerson(reg) {
-    $('pName').textContent = reg.fullName;
-    $('pOrg').textContent = reg.organization || '';
+    $('pName').textContent = reg.fullName || 'ยังไม่ระบุชื่อ';
+    $('pOrg').textContent = reg.organization || 'บัตรสำรอง';
     $('pTable').textContent = reg.table;
+    $('pSeat').textContent = reg.seat || '–';
+    $('pType').textContent = reg.cardType || '';
+    $('pType').hidden = !reg.cardType;
     $('personCard').hidden = false;
   }
+  function seatLabel(reg) { return 'โต๊ะ ' + esc(reg.table) + ' ที่นั่ง ' + esc(reg.seat || '-'); }
   function hidePerson() {
     $('personCard').hidden = true;
     $('btnConfirm').hidden = true;
     currentToken = null;
   }
-  function addRecent(name, table, at) {
-    recent.unshift({ name: name, table: table, at: at });
+  function addRecent(name, table, at, seat) {
+    recent.unshift({ name: name || 'ยังไม่ระบุชื่อ', table: table + (seat ? '/' + seat : ''), at: at });
     recent = recent.slice(0, 15);
     $('count').hidden = false;
     $('count').textContent = recent.length;
@@ -303,9 +316,9 @@
       if (res.ok) {
         beep(true); buzz(70);
         setBanner('success', '<strong>เช็คอินสำเร็จ</strong> เวลา ' + hhmm(res.checkIn.checkedInAt, true) +
-          ' · โต๊ะ ' + esc(res.registration.table));
+          ' · ' + seatLabel(res.registration));
         showPerson(res.registration);
-        addRecent(res.registration.fullName, res.registration.table, res.checkIn.checkedInAt);
+        addRecent(res.registration.fullName, res.registration.table, res.checkIn.checkedInAt, res.registration.seat);
         $('btnConfirm').hidden = true;
       } else if (res.code === 'ALREADY_CHECKED_IN') {
         beep(false); buzz([50, 60, 50]);
