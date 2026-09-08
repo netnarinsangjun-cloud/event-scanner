@@ -402,6 +402,8 @@
       return applyHighRes();
     });
   }
+  function pauseCam() { try { if (running) scanner.pause(true); } catch (e) { /* ignore */ } }
+  function resumeCam() { try { if (running) scanner.resume(); } catch (e) { /* ignore */ } }
   function stopCam() {
     if (!running) return Promise.resolve();
     return scanner.stop().catch(function () { /* ignore */ }).then(function () { running = false; });
