@@ -394,8 +394,11 @@
     } catch (e) { return Promise.resolve(); }
   }
   var SCAN_CONFIG = {
-    fps: 10,
-    qrbox: function (w, h) { var m = Math.round(Math.min(w, h) * 0.72); return { width: m, height: m }; }
+    fps: 15,
+    // กรอบกว้างขึ้น เผื่อ QR ใบใหญ่หรือถือใกล้
+    qrbox: function (w, h) { var m = Math.round(Math.min(w, h) * 0.88); return { width: m, height: m }; },
+    // ใช้ตัวถอดรหัสของเบราว์เซอร์เองถ้ามี (Android Chrome) ทนภาพเบลอและ QR บนจอมือถือได้ดีกว่ามาก
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
   };
 
   function onScan(text) { handleToken(text); }
@@ -455,7 +458,7 @@
     return first.then(function () {
       return modes.indexOf('continuous') >= 0 ? applyTrack({ focusMode: 'continuous' }) : true;
     }).then(function () {
-      note.textContent = 'แตะที่ภาพเพื่อสั่งโฟกัส ถ้ายังไม่ชัดให้ถือห่าง QR ประมาณ 20-30 ซม.';
+      zoomHint($('zoomRange').value || 1);
       return true;
     });
   }
@@ -578,18 +581,25 @@
     zoomCaps = caps.zoom;
     var r = $('zoomRange');
     r.min = caps.zoom.min;
-    r.max = Math.min(caps.zoom.max, Math.max(caps.zoom.min + 1, 5));
+    r.max = Math.min(caps.zoom.max, Math.max(caps.zoom.min + 1, 3));   // เกิน 3x โฟกัสระยะใกล้แทบไม่ได้
     r.step = caps.zoom.step || 0.1;
-    var z = savedZoom();
-    if (!z || z < r.min || z > r.max) z = caps.zoom.min;   // เริ่มที่ 1x กล้องจะโฟกัสง่ายที่สุด
+    var z = caps.zoom.min;   // เริ่มที่ 1x เสมอ ซูมมากทำให้กล้องโฟกัสระยะใกล้ไม่ได้
     r.value = z;
+    zoomHint(z);
     row.hidden = false;
     applyZoom(z);
+  }
+  function zoomHint(z) {
+    var note = $('focusNote');
+    note.textContent = Number(z) > 1.6
+      ? 'ซูมมากทำให้โฟกัสระยะใกล้ยาก ถ้าไม่ติดให้กดรีเซ็ตกลับ 1x แล้วถือห่าง 20-30 ซม.'
+      : 'แตะที่ภาพเพื่อสั่งโฟกัส ถ้ายังไม่ชัดให้ถือห่าง QR ประมาณ 20-30 ซม.';
   }
   function applyZoom(z) {
     z = Number(z);
     $('zoomVal').textContent = z.toFixed(1).replace(/\.0$/, '') + 'x';
     set(KEY_ZOOM, String(z));
+    zoomHint(z);
     try {
       scanner.applyVideoConstraints({ advanced: [{ zoom: z }] })
         .then(function () { return enableContinuousFocus(); })   // ซูมแล้วกล้องมักล็อกโฟกัส ต้องสั่งใหม่
