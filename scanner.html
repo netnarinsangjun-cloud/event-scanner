@@ -904,6 +904,24 @@
     handleToken(v);
     $('manualCode').value = '';
   });
+  /* รับข้อมูลจากเครื่องสแกนแบบ keyboard wedge (SUNMI, เครื่องสแกน USB, บลูทูธ)
+   * เครื่องพวกนี้ "พิมพ์" รหัสรัว ๆ แล้วปิดท้ายด้วย Enter จึงดักที่ระดับหน้าเว็บได้เลย
+   * ไม่ต้องคลิกช่องใดก่อน                                                        */
+  var wedgeBuf = '', wedgeLast = 0;
+  document.addEventListener('keydown', function (e) {
+    var el = e.target, tag = el && el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el && el.isContentEditable)) return;
+    var now = Date.now();
+    if (now - wedgeLast > 250) wedgeBuf = '';   // พิมพ์ช้ากว่านี้ถือว่าเป็นคนพิมพ์ ไม่ใช่เครื่องสแกน
+    wedgeLast = now;
+    if (e.key === 'Enter') {
+      if (wedgeBuf.length >= 6) { e.preventDefault(); lastSeen = { token: '', at: 0 }; handleToken(wedgeBuf); }
+      wedgeBuf = '';
+    } else if (e.key && e.key.length === 1) {
+      wedgeBuf += e.key;
+    }
+  });
+
   $('manualCode').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { e.preventDefault(); $('btnManual').click(); }
   });
