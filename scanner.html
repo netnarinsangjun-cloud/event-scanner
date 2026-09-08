@@ -401,35 +401,33 @@
     return id ? { deviceId: { exact: id } } : { facingMode: 'environment' };
   }
   /** ขอภาพความละเอียดสูง ยิ่งละเอียด QR ยิ่งอ่านง่ายแม้กล้องมุมกว้าง */
-  function applyHighRes() {
-    try {
-      var caps = trackCaps();
-      var w = (caps && caps.width && caps.width.max) ? Math.min(caps.width.max, 2560) : 1920;
-      var h = (caps && caps.height && caps.height.max) ? Math.min(caps.height.max, 1440) : 1080;
-      return scanner.applyVideoConstraints({ width: { ideal: w }, height: { ideal: h } })
-        .catch(function () { /* กล้องไม่รองรับก็ใช้ค่าเดิม */ });
-    } catch (e) { return Promise.resolve(); }
+  /** ความละเอียดต้องกำหนดตั้งแต่ตอนเปิดกล้อง ถ้าเปลี่ยนทีหลังกรอบสแกนจะเพี้ยนไม่ตรงกับภาพ */
+  function scanConfig(id) {
+    var vc = id ? { deviceId: { exact: id } } : { facingMode: 'environment' };
+    vc.width = { ideal: 1280 };
+    vc.height = { ideal: 720 };
+    return {
+      fps: 10,
+      qrbox: function (w, h) { var m = Math.round(Math.min(w, h) * BOX_RATIO); return { width: m, height: m }; },
+      aspectRatio: 1,
+      videoConstraints: vc
+    };
   }
   // สัดส่วนกรอบสแกนเทียบกับด้านสั้นของภาพ เปลี่ยนได้จากหน้าจอ
   var BOX_RATIO = parseFloat(get('scanner_box')) || 0.72;
-  var SCAN_CONFIG = {
-    fps: 10,
-    qrbox: function (w, h) { var m = Math.round(Math.min(w, h) * BOX_RATIO); return { width: m, height: m }; }
-  };
+
 
   function onScan(text) { handleToken(text); }
   function onScanErr() { /* ข้ามข้อผิดพลาดระหว่างเล็ง */ }
 
   function startWith(id) {
     scanner = scanner || new Html5Qrcode('reader');
-    return scanner.start(cameraSource(id), SCAN_CONFIG, onScan, onScanErr).then(function () {
+    return scanner.start(cameraSource(id), scanConfig(id), onScan, onScanErr).then(function () {
       running = true;
       currentCamId = id || currentCamId;
-      return applyHighRes().then(function () {
-        setupTorch();
-        setupFocus();
-        return enableContinuousFocus();
-      });
+      setupTorch();
+      setupFocus();
+      return enableContinuousFocus();
     });
   }
   /** เข้าถึง track ของกล้องโดยตรง เพื่อสั่งโฟกัสและไฟฉายซึ่งไลบรารีไม่ได้เปิดให้ */
