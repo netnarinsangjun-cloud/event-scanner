@@ -414,7 +414,7 @@
 
   /* ---------- กล้อง ---------- */
   var KEY_CAM = 'scanner_cam', KEY_ZOOM = 'scanner_zoom2';
-  var cameras = [], currentCamId = null, switching = false, zoomCaps = null;
+  var cameras = [], currentCamId = null, switching = false, zoomCaps = null, intentionalStop = false;
 
   /** ให้คะแนนกล้องหลังตัวหลัก (1x) สูงสุด เลี่ยง Ultra Wide / Macro / Telephoto / กล้องหน้า */
   function cameraScore(label) {
@@ -608,30 +608,77 @@
   }
   var shotInfo = '', shotSource = '';
   /** อ่าน QR จากภาพนิ่ง ลองตัวถอดรหัสของระบบก่อน แล้วค่อยลองตัวสำรองและภาพครอบกลาง */
-  function decodeBlob(blob) {
-    shotInfo = shotSource + ' · ' + Math.round((blob.size || 0) / 1024) + ' KB';
-    if (!window.createImageBitmap) return decodeWithLib(blob);   // Safari รุ่นเก่าไม่มีคำสั่งนี้
+  /** สร้างภาพผู้สมัครหลายแบบจาก blob เดียว เพื่อลองถอดรหัสไล่ไปทีละแบบ */
+  function candidateBlobs(blob) {
+    var out = [{ label: 'ภาพเต็ม', blob: blob }];
+    if (!window.createImageBitmap) return Promise.resolve(out);
     return createImageBitmap(blob).then(shrinkBitmap).then(function (bmp) {
       shotInfo = bmp.width + 'x' + bmp.height + ' · ' + shotInfo;
-      if (!window.BarcodeDetector) return null;
-      return new BarcodeDetector({ formats: ['qr_code'] }).detect(bmp)
-        .then(function (list) { return (list && list.length) ? list[0].rawValue : null; }, function () { return null; })
-        .then(function (text) {
-          if (text) { shotInfo += ' · ตัวอ่านระบบ'; return text; }
-          return centerCrop(bmp).then(function (cropped) {
-            if (!cropped) return null;
-            return new BarcodeDetector({ formats: ['qr_code'] }).detect(cropped)
-              .then(function (list) {
-                if (list && list.length) { shotInfo += ' · ครอบกลางภาพ'; return list[0].rawValue; }
-                return null;
-              }, function () { return null; });
-          });
+      // ครอบกลางภาพหลายขนาด เผื่อ QR เล็กและอยู่กลางเฟรม
+      var jobs = [[0.6, 2], [0.4, 3]].map(function (cfg) {
+        return cropToBlob(bmp, cfg[0], cfg[1]).then(function (b) {
+          return b ? { label: 'ครอบกลาง ' + Math.round(cfg[0] * 100) + '%', blob: b, bitmap: true } : null;
         });
-    }, function () { return null; }).then(function (text) {
-      if (text) return text;
-      return decodeWithLib(blob).then(function (t) { if (t) shotInfo += ' · ตัวอ่านสำรอง'; return t; });
+      });
+      return Promise.all(jobs).then(function (list) {
+        out[0].bmp = bmp;
+        list.forEach(function (x) { if (x) out.push(x); });
+        return out;
+      });
+    }, function () { return out; });
+  }
+
+  /** ครอบกลางภาพตามสัดส่วนแล้วขยาย คืนเป็น blob สำหรับส่งให้ตัวถอดรหัส */
+  function cropToBlob(bmp, ratio, scale) {
+    return new Promise(function (resolve) {
+      try {
+        var side = Math.round(Math.min(bmp.width, bmp.height) * ratio);
+        var sx = Math.round((bmp.width - side) / 2), sy = Math.round((bmp.height - side) / 2);
+        var c = document.createElement('canvas');
+        c.width = Math.min(side * scale, 2400);
+        c.height = c.width;
+        var ctx = c.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bmp, sx, sy, side, side, 0, 0, c.width, c.height);
+        c.toBlob(function (b) { resolve(b || null); }, 'image/jpeg', 0.95);
+      } catch (e) { resolve(null); }
     });
   }
+
+  /** ถอดรหัสจากภาพหนึ่งใบ ลองตัวอ่านของระบบก่อน แล้วค่อยตัวอ่านสำรองของไลบรารี */
+  function decodeOne(item) {
+    var native = Promise.resolve(null);
+    if (window.BarcodeDetector) {
+      native = (item.bmp ? Promise.resolve(item.bmp) : createImageBitmap(item.blob))
+        .then(function (bmp) { return new BarcodeDetector({ formats: ['qr_code'] }).detect(bmp); })
+        .then(function (list) { return (list && list.length) ? list[0].rawValue : null; }, function () { return null; });
+    }
+    return native.then(function (text) {
+      if (text) { shotInfo += ' · ' + item.label + ' (ตัวอ่านระบบ)'; return text; }
+      return decodeWithLib(item.blob).then(function (t) {
+        if (t) shotInfo += ' · ' + item.label + ' (ตัวอ่านสำรอง)';
+        return t;
+      });
+    });
+  }
+
+  /**
+   * อ่าน QR จากภาพนิ่ง ลองหลายแบบต่อกันจนกว่าจะได้
+   * ภาพเต็ม -> ครอบกลาง 60% -> ครอบกลาง 40% แต่ละแบบลองทั้งตัวอ่านของระบบและของไลบรารี
+   * (iPhone ไม่มีตัวอ่านของระบบ จึงต้องพึ่งการครอบกลางเป็นหลัก)
+   */
+  function decodeBlob(blob) {
+    shotInfo = shotSource + ' · ' + Math.round((blob.size || 0) / 1024) + ' KB';
+    return candidateBlobs(blob).then(function (items) {
+      function next(i) {
+        if (i >= items.length) return Promise.resolve(null);
+        return decodeOne(items[i]).then(function (text) { return text || next(i + 1); });
+      }
+      return next(0);
+    });
+  }
+
   /** ครอบกลางภาพ 60% แล้วขยาย 2 เท่า ช่วยกรณี QR เล็กอยู่กลางภาพใหญ่ */
   /** ย่อภาพให้ด้านยาวไม่เกิน 2000 px ภาพความละเอียดสูงมากทำให้ canvas เกินขีดจำกัดและถอดรหัสช้า */
   function shrinkBitmap(bmp) {
@@ -780,6 +827,9 @@
     var t = videoTrack();
     if (!t) return;
     t.onended = function () {
+      // เราสั่งปิดเองอยู่ (สลับกล้อง/เปลี่ยนกรอบ) ห้ามเปิดซ้อน มิฉะนั้นไลบรารีจะขึ้น
+      // "Cannot clear while scan is ongoing" แล้วภาพจะดำค้าง
+      if (intentionalStop || switching || switchCamera.busy) return;
       running = false;
       stopNativeLoop();
       $('camMsg').textContent = 'กล้องถูกปิด กำลังเปิดใหม่...';
@@ -787,7 +837,7 @@
     };
   }
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden || !running) return;
+    if (document.hidden || !running || switching || intentionalStop || switchCamera.busy) return;
     var t = videoTrack();
     if (!t || t.readyState === 'ended') { running = false; stopNativeLoop(); startCam(); }
   });
@@ -797,7 +847,9 @@
     clearInterval(autoFocusTimer);
     clearTimeout(applyZoom.t);
     if (!running) return Promise.resolve();
-    return scanner.stop().catch(function () { /* ignore */ }).then(function () { running = false; });
+    intentionalStop = true;
+    function finish() { running = false; intentionalStop = false; }
+    return scanner.stop().then(finish, finish);
   }
 
   /** แปลข้อความผิดพลาดของกล้องเป็นภาษาไทย และเตือนกรณีเปิดผ่านเบราว์เซอร์ในแอป */
