@@ -458,9 +458,26 @@
   function onScan(text) { handleToken(text); }
   function onScanErr() { /* ข้ามข้อผิดพลาดระหว่างเล็ง */ }
 
+  /** ไลบรารียังสแกนค้างอยู่ไหม (ถ้าใช่ต้องปิดก่อน ไม่งั้น start จะโยน Cannot clear...) */
+  function libScanning() {
+    try {
+      return !!(scanner && scanner.getState && window.Html5QrcodeScannerState &&
+        scanner.getState() === Html5QrcodeScannerState.SCANNING);
+    } catch (e) { return false; }
+  }
+
   function startWith(id) {
     scanner = scanner || new Html5Qrcode('reader');
-    return scanner.start(cameraSource(id), scanConfig(id), onScan, onScanErr).then(function () {
+    var ready = Promise.resolve();
+    if (libScanning()) {
+      // รอบก่อนหยุดไม่สมบูรณ์ ปิดให้เรียบร้อยก่อนเปิดใหม่
+      intentionalStop = true;
+      ready = scanner.stop().catch(function () { /* ignore */ }).then(function () { intentionalStop = false; },
+        function () { intentionalStop = false; });
+    }
+    return ready.then(function () {
+      return scanner.start(cameraSource(id), scanConfig(id), onScan, onScanErr);
+    }).then(function () {
       running = true;
       currentCamId = id || currentCamId;
       setupTorch();
@@ -814,7 +831,11 @@
     }).then(function () {
       if (!saved && cameras.length > 1) {                 // ครั้งแรก เลือกกล้องหลังตัวหลักให้เอง
         var best = pickBestCamera(cameras);
-        if (best && best.id !== currentCamId) return switchCamera(best.id);
+        var now = cameras.filter(function (c) { return c.id === currentCamId; })[0];
+        // สลับเฉพาะเมื่อกล้องที่เปิดอยู่แย่กว่าชัดเจน การสลับโดยไม่จำเป็นทำให้ iPhone ภาพดำ
+        if (best && best.id !== currentCamId && (!now || cameraScore(best.label) > cameraScore(now.label) + 3)) {
+          return switchCamera(best.id);
+        }
       }
     }).then(function () { setupZoom(); })
       .catch(function (err) {
@@ -827,7 +848,16 @@
   /** รายชื่อกล้อง (ชื่อจะขึ้นหลังผู้ใช้กดอนุญาตแล้วเท่านั้น) */
   function listCameras() {
     $('camTools').hidden = false;
-    return Html5Qrcode.getCameras().then(function (list) {
+    // ใช้ enumerateDevices ตรง ๆ เพราะ Html5Qrcode.getCameras() จะขอกล้องรอบใหม่
+    // ซึ่งบน iPhone ทำให้ภาพจากกล้องตัวแรกดำค้าง
+    var listing = (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)
+      ? navigator.mediaDevices.enumerateDevices().then(function (devs) {
+          return (devs || []).filter(function (d) { return d.kind === 'videoinput'; })
+            .map(function (d, i) { return { id: d.deviceId, label: d.label || ('กล้อง ' + (i + 1)) }; })
+            .filter(function (c) { return !!c.id; });
+        })
+      : Html5Qrcode.getCameras();
+    return listing.then(function (list) {
       cameras = list || [];
       if (!currentCamId) currentCamId = trackSetting('deviceId') || null;
       var sel = $('camSelect');
@@ -855,16 +885,23 @@
 
   function switchCamera(id) {
     if (!id || id === currentCamId) return Promise.resolve();
+    if (switchCamera.busy) return Promise.resolve();   // กันสลับซ้อนกันจนไลบรารีสับสน
+    switchCamera.busy = true;
     $('camMsg').textContent = 'กำลังสลับกล้อง...';
     return stopCam().then(function () { return startWith(id); }).then(function () {
       set(KEY_CAM, id);
       $('camSelect').value = id;
-      $('camMsg').textContent = 'เล็งกล้องไปที่ QR Code';
+      $('camMsg').textContent = 'เล็งกล้องไปที่ QR Code' + camInfo();
       setupZoom();
     }).catch(function (err) {
       $('camMsg').textContent = 'สลับกล้องไม่สำเร็จ: ' + (err && err.message ? err.message : err);
-      return startWith(null).catch(function () { /* ignore */ });
-    });
+      // ต้องหยุดให้เรียบร้อยก่อนเปิดใหม่ ไม่งั้นไลบรารีจะขึ้น Cannot clear while scan is ongoing
+      return stopCam().then(function () { return startWith(null); }).catch(function () { /* ignore */ });
+    }).then(function () {
+      switchCamera.busy = false;
+      if (!running) $('btnRetryCam').hidden = false;
+      $('camSelect').value = currentCamId || '';
+    }, function () { switchCamera.busy = false; });
   }
 
   /** ตั้งแถบซูมตามที่กล้องรองรับ ถ้าไม่รองรับจะบอกให้เปลี่ยนกล้องแทน */
